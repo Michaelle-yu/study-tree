@@ -1,0 +1,2788 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="color-scheme" content="dark">
+<title>成长树 · 把时间换成看得见的成长</title>
+<style nonce="__CSP_NONCE__">
+:root{
+  --bg:#0b0f14;--bg2:#0e141c;--panel:#121a23;--surface:#17222e;--line:#24313f;
+  --fg:#e9f0f7;--muted:#8ea0b3;--accent:#4fd1c5;--accent2:#7c9cff;--gold:#ffd166;
+  --danger:#ff6b6b;--ok:#6fe3a1;--radius:14px;
+  --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Liberation Mono",monospace;
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+html,body{min-height:100%}
+body{margin:0;background:
+  radial-gradient(1200px 600px at 15% -10%,rgba(79,209,197,.10),transparent 60%),
+  radial-gradient(1000px 500px at 90% 0%,rgba(124,156,255,.09),transparent 55%),
+  var(--bg);color:var(--fg);font-family:"Segoe UI","PingFang SC","Microsoft YaHei",system-ui,sans-serif;font-size:14px}
+button,input,select,textarea{font:inherit;color:inherit}
+button{cursor:pointer;background:var(--surface);border:1px solid var(--line);border-radius:10px;padding:7px 12px;transition:.15s}
+button:hover{border-color:#3a4b5e;transform:translateY(-1px)}
+button:disabled{opacity:.45;cursor:not-allowed;transform:none}
+button.primary{background:var(--accent);border-color:transparent;color:#06211f;font-weight:700}
+button.primary:hover{filter:brightness(1.06)}
+button.ghost{background:transparent}
+button.danger{color:var(--danger);border-color:rgba(255,107,107,.35);background:rgba(255,107,107,.06)}
+button.mini{padding:3px 7px;border-radius:8px;font-size:12px}
+input,select,textarea{width:100%;background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:8px 10px;outline:none}
+input:focus,select:focus,textarea:focus{border-color:var(--accent);box-shadow:0 0 0 3px rgba(79,209,197,.12)}
+textarea{resize:vertical;min-height:90px;line-height:1.55}
+label{display:block;font-size:12px;color:var(--muted);margin:10px 0 5px}
+a{color:var(--accent2)}
+h1,h2,h3{margin:0}
+.mono{font-family:var(--mono);font-variant-numeric:tabular-nums}
+.muted{color:var(--muted)}
+.row{display:flex;gap:10px;align-items:center;flex-wrap:wrap}
+.grow{flex:1;min-width:8px}
+.spread{display:flex;justify-content:space-between;align-items:center;gap:10px}
+.panel{background:linear-gradient(180deg,rgba(23,34,46,.92),rgba(18,26,35,.94));border:1px solid var(--line);border-radius:var(--radius)}
+.pill{display:inline-flex;align-items:center;gap:4px;padding:2px 8px;border-radius:999px;background:rgba(124,156,255,.12);border:1px solid rgba(124,156,255,.28);font-size:11px;color:#c4d2ff}
+.pill.ok{background:rgba(111,227,161,.1);border-color:rgba(111,227,161,.3);color:#b8f3d1}
+.pill.warn{background:rgba(255,209,102,.1);border-color:rgba(255,209,102,.3);color:#ffe6a6}
+.pill.mutedp{background:rgba(255,255,255,.04);border-color:var(--line);color:var(--muted)}
+.sync{font-size:11px;color:var(--muted);min-width:52px}
+
+/* 认证 */
+.auth-view{min-height:100vh;display:grid;place-items:center;padding:24px}
+.auth-card{width:min(420px,100%);background:linear-gradient(180deg,rgba(24,35,47,.97),rgba(16,23,31,.98));border:1px solid var(--line);border-radius:20px;padding:28px;box-shadow:0 30px 80px rgba(0,0,0,.5),0 0 0 1px rgba(79,209,197,.06) inset}
+.auth-brand{font-size:30px;font-weight:800;letter-spacing:2px;background:linear-gradient(90deg,var(--accent),var(--accent2));-webkit-background-clip:text;background-clip:text;color:transparent}
+.auth-sub{color:var(--muted);margin:8px 0 20px;line-height:1.7}
+.tabs{display:flex;gap:6px;background:var(--bg2);padding:4px;border-radius:12px;margin-bottom:14px}
+.tab{flex:1;background:transparent;border:0;padding:8px;border-radius:9px;color:var(--muted)}
+.tab.active{background:var(--surface);color:var(--fg);box-shadow:0 1px 0 rgba(255,255,255,.03) inset}
+.auth-error{min-height:20px;color:var(--danger);font-size:12px;margin-top:10px;line-height:1.5}
+.captcha-row{display:grid;grid-template-columns:1fr auto auto;gap:6px;align-items:center}
+.captcha-q{background:var(--bg2);border:1px dashed var(--line);border-radius:9px;padding:8px 10px;font-family:var(--mono);letter-spacing:1px;text-align:center;white-space:nowrap}
+.auth-foot{font-size:12px;color:var(--muted);margin-top:16px;line-height:1.7}
+
+/* 顶栏 */
+.topbar{position:sticky;top:0;z-index:40;display:flex;align-items:center;gap:14px;padding:10px 16px;background:rgba(11,15,20,.86);backdrop-filter:blur(14px);border-bottom:1px solid var(--line)}
+.brand{font-weight:800;letter-spacing:1px;white-space:nowrap}
+.week-tag{font-family:var(--mono);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 8px;margin-left:6px}
+.mainnav{display:flex;gap:3px;flex-wrap:wrap}
+.navbtn{background:transparent;border:1px solid transparent;padding:6px 11px;color:var(--muted);border-radius:9px}
+.navbtn:hover{color:var(--fg);background:rgba(255,255,255,.04)}
+.navbtn.active{background:rgba(79,209,197,.13);border-color:rgba(79,209,197,.3);color:var(--accent)}
+.stats{margin-left:auto;display:flex;align-items:center;gap:14px}
+.stat{display:flex;align-items:baseline;gap:6px}
+.stat-label{font-size:11px;color:var(--muted)}
+.stat strong{font-size:16px;color:var(--accent)}
+.exp-wrap{width:86px;height:6px;border-radius:999px;background:var(--bg2);border:1px solid var(--line);overflow:hidden}
+.exp-fill{height:100%;width:0%;background:linear-gradient(90deg,var(--accent2),var(--accent));transition:width .3s}
+.user-btn{max-width:120px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:6px 10px;border-radius:999px}
+.more-btn{display:none}
+
+main{padding:12px;max-width:1720px;margin:0 auto}
+
+/* 树视图 */
+.tree-view{display:grid;grid-template-columns:250px minmax(0,1fr);gap:12px;height:calc(100vh - 76px);min-height:520px}
+.tree-view.drawer-open{grid-template-columns:250px minmax(0,1fr) 344px}
+.side{overflow:auto;padding:10px}
+.side-head{display:flex;justify-content:space-between;align-items:center;padding:4px 4px 10px;border-bottom:1px solid var(--line);margin-bottom:8px}
+.side-head h2{font-size:15px}
+.side-actions{display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-top:10px}
+.side-actions button{padding:7px 6px;font-size:12px}
+.cat{margin:8px 0;border:1px solid transparent;border-radius:12px;padding:4px}
+.cat.active{background:rgba(79,209,197,.05);border-color:rgba(79,209,197,.18)}
+.cat-head{display:flex;align-items:center;gap:4px;padding:5px 6px;border-radius:8px}
+.cat-head:hover{background:rgba(255,255,255,.03)}
+.cat-name{background:transparent;border:0;text-align:left;flex:1;font-weight:700;color:var(--fg);padding:3px 4px;border-radius:6px;font-size:13px}
+.cat-count{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.cat-tools{display:flex;gap:2px;opacity:.55}
+.cat:hover .cat-tools{opacity:1}
+.side-node{display:flex;align-items:center;gap:7px;padding:6px 8px;border-radius:8px;cursor:pointer;border:1px solid transparent;font-size:12.5px}
+.side-node:hover{background:rgba(255,255,255,.04);border-color:var(--line)}
+.side-node.leaf{padding-left:22px;color:#c5d3e1}
+.side-node .dot{width:7px;height:7px;border-radius:50%;background:#35485c;flex:0 0 auto}
+.side-node .dot.on{background:var(--accent);box-shadow:0 0 8px rgba(79,209,197,.8)}
+.side-node .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.side-node .cost{color:var(--gold);font-size:11px}
+.empty{padding:16px 8px;color:var(--muted);font-size:12px;text-align:center;line-height:1.7}
+
+.canvas-wrap{position:relative;overflow:hidden;border:1px solid var(--line);border-radius:var(--radius);background:
+  radial-gradient(circle at 20% 20%,rgba(79,209,197,.05),transparent 40%),
+  radial-gradient(circle at 80% 80%,rgba(124,156,255,.05),transparent 40%),
+  #0c1219;touch-action:none;min-height:420px}
+.canvas-toolbar{position:absolute;z-index:12;top:10px;left:10px;right:10px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;pointer-events:none}
+.canvas-toolbar>*{pointer-events:auto}
+.canvas-toolbar .grow{flex:1}
+.canvas-hint{position:absolute;left:12px;bottom:10px;color:#5c6d7f;font-size:11px;pointer-events:none;z-index:5}
+#canvasLayer{position:absolute;left:0;top:0;transform-origin:0 0;will-change:transform}
+.cgroup{position:absolute;border:1px solid var(--line);border-radius:16px;background:linear-gradient(180deg,rgba(20,30,41,.55),rgba(14,20,27,.5));box-shadow:0 16px 40px rgba(0,0,0,.25)}
+.cgroup-head{position:absolute;left:12px;right:12px;top:9px;display:flex;align-items:center;gap:8px;cursor:pointer;padding:2px 4px;border-radius:8px}
+.cgroup-head:hover{background:rgba(255,255,255,.03)}
+.cgroup-head.selected{outline:2px solid var(--accent2);outline-offset:2px;border-radius:8px}
+.cgroup-title{font-weight:700;font-size:13px}
+.cgroup-meta{font-size:11px;color:var(--muted);font-family:var(--mono)}
+.cgroup-head .pill{margin-left:auto}
+.cnode{position:absolute;width:190px;min-height:76px;padding:10px 11px;border-radius:12px;background:linear-gradient(160deg,#1a2734,#141e29);border:1px solid var(--line);cursor:pointer;box-shadow:0 8px 20px rgba(0,0,0,.22);transition:border-color .15s,box-shadow .15s,transform .15s}
+.cnode:hover{border-color:#3d5268;transform:translateY(-1px)}
+.cnode.locked{opacity:.8;border-style:dashed}
+.cnode.unlocked{border-color:rgba(79,209,197,.55);box-shadow:0 0 22px rgba(79,209,197,.12),0 8px 20px rgba(0,0,0,.22)}
+.cnode.selected{outline:2px solid var(--accent2);outline-offset:2px}
+.cnode .n-title{font-weight:700;font-size:13px;line-height:1.35;word-break:break-word}
+.cnode .n-meta{display:flex;gap:6px;align-items:center;margin-top:7px;font-size:11px;color:var(--muted)}
+.cnode .n-cost{color:var(--gold);font-family:var(--mono)}
+.cnode .n-note{margin-top:6px;font-size:11px;color:#8fa3b8;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cnode .n-badge{position:absolute;right:8px;top:8px;width:7px;height:7px;border-radius:50%;background:#35485c}
+.cnode.unlocked .n-badge{background:var(--accent);box-shadow:0 0 8px var(--accent)}
+.multi-bar{position:absolute;z-index:15;left:50%;bottom:16px;transform:translateX(-50%);display:flex;gap:10px;align-items:center;background:rgba(15,22,30,.96);border:1px solid var(--line);border-radius:999px;padding:7px 10px 7px 16px;box-shadow:0 16px 40px rgba(0,0,0,.4)}
+.visitor-banner{position:absolute;z-index:14;left:50%;top:52px;transform:translateX(-50%);background:rgba(255,209,102,.12);border:1px solid rgba(255,209,102,.35);color:#ffe6a6;padding:6px 12px;border-radius:999px;font-size:12px;display:flex;gap:10px;align-items:center}
+
+/* 抽屉 */
+.drawer{overflow:auto;padding:12px}
+.drawer-head{display:flex;justify-content:space-between;align-items:flex-start;gap:8px;padding-bottom:8px;border-bottom:1px solid var(--line);margin-bottom:6px}
+.drawer-title{font-size:16px;font-weight:800;word-break:break-word}
+.drawer-sub{color:var(--muted);font-size:11px;margin-top:3px;font-family:var(--mono)}
+.chips{display:flex;flex-wrap:wrap;gap:6px;margin-top:4px}
+.chip{padding:4px 9px;border-radius:999px;background:var(--bg2);border:1px solid var(--line);font-size:11.5px;cursor:pointer;color:var(--muted)}
+.chip.on{background:rgba(124,156,255,.16);border-color:rgba(124,156,255,.45);color:#d6e0ff}
+.photo-grid{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-top:6px}
+.photo-item{position:relative;border:1px solid var(--line);border-radius:9px;overflow:hidden;aspect-ratio:1;background:var(--bg2)}
+.photo-item img{width:100%;height:100%;object-fit:cover;display:block}
+.photo-item .x{position:absolute;right:3px;top:3px;padding:0 5px;font-size:11px;line-height:17px;border-radius:6px;background:rgba(0,0,0,.65);border:1px solid rgba(255,255,255,.15)}
+.drawer-actions{display:grid;grid-template-columns:1fr 1fr;gap:7px;margin-top:12px}
+.drawer-actions .wide{grid-column:1/-1}
+.hint-line{font-size:11.5px;color:var(--muted);margin-top:6px;line-height:1.55}
+.divider{height:1px;background:var(--line);margin:12px 0}
+
+/* 课表 */
+.tt-shell{display:grid;grid-template-columns:minmax(0,1fr) 310px;gap:12px}
+.tt-panel{padding:10px}
+.tt-top{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:2px 2px 10px}
+.tt-scroll{overflow:auto;max-height:calc(100vh - 178px);border-radius:10px;border:1px solid var(--line);background:#0c1219}
+.tt-inner{position:relative;min-width:860px}
+.tt-table{display:grid;grid-template-columns:46px repeat(7,minmax(108px,1fr))}
+.tt-corner,.tt-dayhead{position:sticky;top:0;z-index:8;background:#0f1720;border-bottom:1px solid var(--line);padding:8px 4px;text-align:center;font-size:12px;color:var(--muted)}
+.tt-corner{left:0;z-index:9;border-right:1px solid var(--line)}
+.tt-axis{position:relative;height:840px;border-right:1px solid var(--line);background:#0f1720}
+.tt-axis span{position:absolute;right:5px;font-size:10px;color:#65788c;font-family:var(--mono);transform:translateY(-6px)}
+.tt-axis span:first-child{transform:none}
+.tt-axis span:last-child{transform:translateY(-100%)}
+.tt-col{position:relative;height:840px;border-left:1px solid rgba(36,49,63,.55);background-image:repeating-linear-gradient(to bottom,rgba(255,255,255,.045) 0 1px,transparent 1px 60px)}
+.tt-col:nth-child(odd){background-color:rgba(255,255,255,.008)}
+.tt-card{position:absolute;border-radius:8px;padding:4px 6px;overflow:hidden;cursor:pointer;font-size:11.5px;line-height:1.25;z-index:3;border:1px solid;transition:box-shadow .15s}
+.tt-card.course{background:rgba(79,209,197,.18);border-color:rgba(79,209,197,.55);color:#d9fbf7}
+.tt-card.plan{background:rgba(124,156,255,.07);border:1px dashed rgba(124,156,255,.65);color:#d6e0ff}
+.tt-card.break{height:20px!important;padding:0 5px;background:rgba(255,209,102,.1);border:1px dashed rgba(255,209,102,.55);color:#ffe6a6;z-index:4;font-size:10px;display:flex;align-items:center}
+.tt-card.selected{outline:2px solid var(--gold);outline-offset:1px;z-index:6}
+.tt-card.highlight{box-shadow:0 0 0 2px rgba(124,156,255,.85),0 0 16px rgba(124,156,255,.5)}
+.tt-card .t-title{font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.tt-card .t-time{font-size:10px;opacity:.8;font-family:var(--mono)}
+.tt-card .t-del{position:absolute;right:2px;top:2px;background:rgba(0,0,0,.55);border:1px solid rgba(255,255,255,.2);border-radius:5px;padding:0 4px;font-size:10px;line-height:15px}
+.tt-nowline{position:absolute;left:46px;right:0;height:0;border-top:2px solid #ff5c5c;z-index:20;pointer-events:none;filter:drop-shadow(0 0 6px rgba(255,92,92,.55))}
+.tt-nowline .now-label{position:absolute;right:6px;top:-18px;font-size:10px;color:#ff8a8a;background:rgba(255,92,92,.12);border:1px solid rgba(255,92,92,.35);border-radius:6px;padding:0 5px}
+.tt-pet{position:absolute;right:52px;top:-23px;width:40px;height:40px;image-rendering:pixelated;pointer-events:none}
+.tt-side{display:flex;flex-direction:column;gap:12px;max-height:calc(100vh - 178px);overflow:auto}
+.tt-box{padding:10px}
+.tt-box h3{font-size:13px;margin-bottom:8px;display:flex;justify-content:space-between;align-items:center}
+.tt-list{display:flex;flex-direction:column;gap:4px}
+.tt-list-row{display:flex;align-items:center;gap:6px;padding:5px 7px;border-radius:7px;border:1px solid transparent;cursor:pointer;font-size:12px}
+.tt-list-row:hover{background:rgba(255,255,255,.04);border-color:var(--line)}
+.tt-list-row.hl{background:rgba(124,156,255,.12);border-color:rgba(124,156,255,.35)}
+.tt-list-row .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.tt-list-row .cnt{font-size:10px;color:var(--muted);font-family:var(--mono)}
+.rate-row{display:flex;align-items:center;gap:10px}
+.rate-row input[type=range]{padding:0;background:transparent;border:0}
+.formula{font-size:11.5px;color:var(--muted);line-height:1.8;background:var(--bg2);border:1px solid var(--line);border-radius:9px;padding:8px;margin-top:8px;font-family:var(--mono);white-space:pre-line}
+.task-row{display:flex;align-items:center;gap:6px;padding:4px 0;font-size:12px}
+.task-row input[type=checkbox]{width:auto;padding:0}
+.task-row .tm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.task-row .tp{color:var(--gold);font-family:var(--mono);font-size:11px}
+.pet-select{padding:4px 8px;width:auto}
+
+/* 笔记 */
+.notes-layout{display:grid;grid-template-columns:280px minmax(0,1fr);gap:12px;min-height:calc(100vh - 100px)}
+.notes-side{padding:10px;display:flex;flex-direction:column;gap:8px}
+.note-item{display:flex;justify-content:space-between;align-items:center;gap:6px;padding:7px 8px;border-radius:8px;cursor:pointer;border:1px solid transparent;font-size:12.5px}
+.note-item:hover{background:rgba(255,255,255,.04);border-color:var(--line)}
+.note-item.active{background:rgba(79,209,197,.1);border-color:rgba(79,209,197,.3)}
+.note-item .nm{flex:1;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.notes-editor{padding:12px;display:flex;flex-direction:column;gap:8px;min-height:480px}
+.notes-editor textarea{flex:1;min-height:360px;font-family:var(--mono);font-size:13px}
+.md-preview{flex:1;overflow:auto;line-height:1.8;font-size:13.5px;padding:12px;background:var(--bg2);border:1px solid var(--line);border-radius:9px;min-height:360px}
+.md-preview h1,.md-preview h2,.md-preview h3{margin:14px 0 8px;line-height:1.4}
+.md-preview p{margin:7px 0}
+.md-preview code{background:rgba(255,255,255,.07);padding:1px 5px;border-radius:5px;font-family:var(--mono);font-size:12px}
+.md-preview pre{background:#0a0f14;border:1px solid var(--line);border-radius:8px;padding:10px;overflow:auto}
+.md-preview pre code{background:transparent;padding:0}
+.md-preview blockquote{border-left:3px solid var(--accent);margin:8px 0;padding:2px 10px;color:var(--muted)}
+.md-preview ul{margin:6px 0;padding-left:20px}
+.md-preview a{color:var(--accent2)}
+.mode-tabs{display:flex;gap:4px}
+.mode-tabs .chip{border-radius:8px}
+.mode-tabs .chip.on{background:rgba(79,209,197,.14);border-color:rgba(79,209,197,.4);color:var(--accent)}
+
+/* 蓝图 */
+.view-head{display:flex;align-items:center;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.view-head h1{font-size:19px}
+.bp-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:12px}
+.bp-card{padding:14px;border-radius:var(--radius);background:linear-gradient(170deg,rgba(24,36,48,.95),rgba(16,23,31,.96));border:1px solid var(--line);display:flex;flex-direction:column;gap:8px;box-shadow:0 14px 36px rgba(0,0,0,.22)}
+.bp-card h3{font-size:15px;line-height:1.4}
+.bp-card .bp-note{color:var(--muted);font-size:12px;line-height:1.6;max-height:40px;overflow:hidden}
+.bp-meta{display:flex;gap:6px;flex-wrap:wrap;align-items:center;font-size:11px;color:var(--muted)}
+.score{display:flex;align-items:center;gap:7px;font-family:var(--mono);font-size:12px;color:var(--gold)}
+.score-bar{flex:1;height:5px;border-radius:999px;background:var(--bg2);overflow:hidden}
+.score-fill{height:100%;background:linear-gradient(90deg,var(--gold),var(--accent));width:0}
+.bp-actions{display:flex;gap:6px;flex-wrap:wrap;margin-top:auto}
+.empty-state{padding:40px 20px;text-align:center;color:var(--muted);border:1px dashed var(--line);border-radius:var(--radius);line-height:1.8}
+
+/* 好友/反馈/管理 */
+.two-col{display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1fr);gap:12px}
+.box{padding:14px}
+.box h3{font-size:14px;margin-bottom:10px}
+.user-row{display:flex;align-items:center;gap:8px;padding:7px 8px;border-radius:8px;border:1px solid transparent}
+.user-row:hover{background:rgba(255,255,255,.035);border-color:var(--line)}
+.user-row .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.fb-item{padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg2);margin-bottom:8px}
+.fb-head{display:flex;gap:8px;align-items:center;font-size:11px;color:var(--muted);margin-bottom:6px}
+.fb-text{font-size:13px;line-height:1.7;white-space:pre-wrap;word-break:break-word}
+.reply{margin-top:8px;padding:8px;border-left:2px solid var(--accent2);background:rgba(124,156,255,.05);border-radius:0 8px 8px 0;font-size:12.5px;line-height:1.6;white-space:pre-wrap}
+.table-wrap{overflow:auto;border:1px solid var(--line);border-radius:12px}
+table{width:100%;border-collapse:collapse;font-size:12.5px}
+th,td{padding:9px 10px;text-align:left;border-bottom:1px solid var(--line);white-space:nowrap}
+th{color:var(--muted);font-weight:600;background:rgba(255,255,255,.025);position:sticky;top:0}
+tr:last-child td{border-bottom:0}
+td.wrap{white-space:normal;max-width:320px}
+
+/* 弹窗/提示 */
+.modal-backdrop{position:fixed;inset:0;z-index:90;background:rgba(3,6,9,.66);backdrop-filter:blur(3px);display:flex;align-items:center;justify-content:center;padding:16px}
+.modal{width:min(680px,100%);max-height:88vh;overflow:auto;background:linear-gradient(180deg,#141d27,#101720);border:1px solid var(--line);border-radius:16px;padding:18px;box-shadow:0 30px 90px rgba(0,0,0,.6)}
+.modal-head{display:flex;justify-content:space-between;align-items:center;gap:10px;margin-bottom:12px}
+.modal-head h2{font-size:17px}
+.modal-foot{display:flex;justify-content:flex-end;gap:8px;margin-top:16px;flex-wrap:wrap}
+.modal .wide{width:100%}
+.toast{position:fixed;left:50%;bottom:26px;transform:translateX(-50%) translateY(20px);z-index:120;background:#182532;border:1px solid var(--line);border-radius:12px;padding:10px 16px;box-shadow:0 16px 48px rgba(0,0,0,.5);opacity:0;pointer-events:none;transition:.22s;max-width:min(560px,92vw);font-size:13px;line-height:1.5}
+.toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+.toast.error{border-color:rgba(255,107,107,.45);color:#ffc9c9}
+.toast.ok{border-color:rgba(111,227,161,.4);color:#c8f8dd}
+.more-menu{position:fixed;right:12px;top:58px;z-index:60;background:#141d27;border:1px solid var(--line);border-radius:12px;padding:6px;min-width:170px;box-shadow:0 20px 50px rgba(0,0,0,.5)}
+.more-menu button{display:block;width:100%;text-align:left;border:0;background:transparent;padding:8px 10px;border-radius:8px}
+.more-menu button:hover{background:rgba(255,255,255,.06)}
+.image-strip{display:flex;gap:8px;flex-wrap:wrap;margin-top:8px}
+.image-strip img{width:92px;height:92px;object-fit:cover;border-radius:8px;border:1px solid var(--line)}
+.node-note-block{padding:8px;border:1px solid var(--line);border-radius:8px;margin-top:6px;background:var(--bg2)}
+.node-note-block .t{font-weight:700;font-size:12.5px}
+.node-note-block .n{font-size:12px;color:var(--muted);line-height:1.6;white-space:pre-wrap;margin-top:4px}
+.kv{display:grid;grid-template-columns:84px 1fr;gap:6px 10px;font-size:12px}
+.kv .k{color:var(--muted)}
+.kv .v{word-break:break-word}
+.hr{height:1px;background:var(--line);margin:12px 0}
+
+@media (max-width:1100px){
+  .mainnav{display:none}
+  .more-btn{display:inline-flex}
+  .stats .stat-label{display:none}
+  .tree-view.drawer-open{grid-template-columns:250px minmax(0,1fr)}
+  .drawer{position:fixed;z-index:55;right:10px;bottom:10px;top:64px;width:min(360px,calc(100vw - 20px));background:var(--panel);box-shadow:0 20px 60px rgba(0,0,0,.55)}
+  .tt-shell{grid-template-columns:1fr}
+  .tt-side{max-height:none}
+  .two-col{grid-template-columns:1fr}
+}
+@media (max-width:760px){
+  .topbar{gap:8px;padding:8px 10px;flex-wrap:wrap}
+  .stats{gap:8px}
+  .exp-wrap{display:none}
+  main{padding:8px}
+  .tree-view,.tree-view.drawer-open{grid-template-columns:1fr;height:auto}
+  .side{max-height:170px}
+  .canvas-wrap{height:62vh}
+  .canvas-hint{display:none}
+  .notes-layout{grid-template-columns:1fr}
+  .notes-layout .notes-side{max-height:190px}
+  .view-head h1{font-size:16px}
+  .modal{padding:14px}
+  .tt-card{font-size:10.5px}
+  .bp-grid{grid-template-columns:1fr}
+  .stats .stat strong{font-size:14px}
+  .user-btn{max-width:80px}
+}
+</style>
+</head>
+<body>
+
+<div id="authView" class="auth-view" hidden>
+  <div class="auth-card">
+    <div class="auth-brand">成长树</div>
+    <p class="auth-sub">把本周的空闲时间，按转化率换成科技点，点亮你的能力与知识点。</p>
+    <div class="tabs">
+      <button id="tabLogin" class="tab active" type="button">登录</button>
+      <button id="tabRegister" class="tab" type="button">注册</button>
+    </div>
+    <form id="loginForm" autocomplete="on">
+      <label for="loginName">用户名</label>
+      <input id="loginName" name="username" autocomplete="username" maxlength="20" required>
+      <label for="loginPassword">密码</label>
+      <input id="loginPassword" name="password" type="password" autocomplete="current-password" maxlength="128" required>
+      <div class="modal-foot"><button class="primary wide" type="submit">登录</button></div>
+    </form>
+    <form id="registerForm" hidden autocomplete="on">
+      <label for="regName">用户名（2–20 位）</label>
+      <input id="regName" name="username" autocomplete="username" maxlength="20" required>
+      <label for="regPassword">密码（至少 8 位）</label>
+      <input id="regPassword" name="new-password" type="password" autocomplete="new-password" maxlength="128" required>
+      <label for="regConfirm">确认密码</label>
+      <input id="regConfirm" type="password" autocomplete="new-password" maxlength="128" required>
+      <label>算术验证码</label>
+      <div class="captcha-row">
+        <div id="captchaQuestion" class="captcha-q">加载中…</div>
+        <input id="captchaAnswer" inputmode="numeric" autocomplete="off" placeholder="答案" maxlength="4" required>
+        <button id="captchaRefresh" class="ghost mini" type="button">换一题</button>
+      </div>
+      <div class="modal-foot"><button class="primary wide" type="submit">注册并进入</button></div>
+    </form>
+    <div id="authError" class="auth-error" role="alert"></div>
+    <div class="auth-foot">密码使用 scrypt 加盐存储；会话仅保存在 httpOnly Cookie 中。<br>超级管理员用户名：<span class="mono">protractor45</span></div>
+  </div>
+</div>
+
+<div id="appView" hidden>
+  <header class="topbar">
+    <div class="brand">成长树<span id="weekLabel" class="week-tag"></span></div>
+    <nav class="mainnav" id="mainNav">
+      <button class="navbtn active" type="button" data-view="tree">树</button>
+      <button class="navbtn" type="button" data-view="timetable">课表</button>
+      <button class="navbtn" type="button" data-view="notes">笔记</button>
+      <button class="navbtn" type="button" data-view="blueprints">蓝图</button>
+      <button class="navbtn" type="button" data-view="friends">好友</button>
+      <button class="navbtn" type="button" data-view="feedback">反馈</button>
+      <button class="navbtn" type="button" data-view="admin" id="adminNav" hidden>管理</button>
+    </nav>
+    <div class="stats">
+      <span id="syncState" class="sync"></span>
+      <div class="stat"><span class="stat-label">科技点</span><strong id="pointsValue" class="mono">0</strong></div>
+      <div class="stat"><span class="stat-label">Lv</span><strong id="levelValue" class="mono">1</strong></div>
+      <div class="exp-wrap" title="经验值"><div id="expFill" class="exp-fill"></div></div>
+      <button id="userBtn" class="user-btn" type="button" title="账号与设置"></button>
+    </div>
+    <button id="moreBtn" class="more-btn" type="button" aria-label="更多">⋯</button>
+  </header>
+  <div id="moreMenu" class="more-menu" hidden></div>
+
+  <main>
+    <section id="treeView" class="view tree-view">
+      <aside id="treeSide" class="panel side"></aside>
+      <div id="canvasWrap" class="canvas-wrap">
+        <div id="canvasToolbar" class="canvas-toolbar"></div>
+        <div id="visitorBanner" class="visitor-banner" hidden></div>
+        <div id="canvasLayer"></div>
+        <div id="multiBar" class="multi-bar" hidden></div>
+        <div class="canvas-hint">拖空白平移 · 滚轮缩放 · Ctrl+点击多选</div>
+      </div>
+      <aside id="drawer" class="panel drawer" hidden></aside>
+    </section>
+
+    <section id="timetableView" class="view" hidden></section>
+    <section id="notesView" class="view" hidden></section>
+    <section id="blueprintsView" class="view" hidden></section>
+    <section id="friendsView" class="view" hidden></section>
+    <section id="feedbackView" class="view" hidden></section>
+    <section id="adminView" class="view" hidden></section>
+  </main>
+</div>
+
+<div id="modalRoot"></div>
+<div id="toast" class="toast" role="status" aria-live="polite"></div>
+
+<script nonce="__CSP_NONCE__">
+'use strict';
+
+// ---------------------------------------------------------------- 基础工具
+const $ = sel => document.querySelector(sel);
+const uuid = () => (window.crypto && crypto.randomUUID ? crypto.randomUUID() : 'id-' + Math.random().toString(16).slice(2) + Date.now().toString(16));
+
+function h(tag, attrs = {}, ...children) {
+  const node = document.createElement(tag);
+  if (tag === 'button' && !('type' in attrs)) node.type = 'button';
+  for (const [k, v] of Object.entries(attrs || {})) {
+    if (v === null || v === undefined || v === false) continue;
+    if (k === 'class') node.className = v;
+    else if (k === 'text') node.textContent = String(v);
+    else if (k === 'dataset') Object.assign(node.dataset, v);
+    else if (k.startsWith('on') && typeof v === 'function') node.addEventListener(k.slice(2).toLowerCase(), v);
+    else if (k === 'checked' || k === 'disabled' || k === 'selected' || k === 'draggable') node[k] = !!v;
+    else if (k === 'value') node.value = v;
+    else node.setAttribute(k, v === true ? '' : String(v));
+  }
+  for (const child of children.flat()) {
+    if (child === null || child === undefined || child === false) continue;
+    node.append(child.nodeType ? child : document.createTextNode(String(child)));
+  }
+  return node;
+}
+
+function fmtNum(v) {
+  const n = Number(v) || 0;
+  return Number.isInteger(n) ? String(n) : String(Math.round(n * 10) / 10);
+}
+function pad2(n) { return String(n).padStart(2, '0'); }
+function minToTime(m) { return pad2(Math.floor(m / 60)) + ':' + pad2(m % 60); }
+function timeToMin(t) {
+  if (!/^\d{2}:\d{2}$/.test(String(t || ''))) return null;
+  const [hh, mm] = String(t).split(':').map(Number);
+  return hh * 60 + mm;
+}
+function fmtDate(iso) {
+  if (!iso) return '—';
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return '—';
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+function dayName(n) { return ['周一', '周二', '周三', '周四', '周五', '周六', '周日'][n - 1] || ''; }
+
+function setSync(text) { const el = $('#syncState'); if (el) el.textContent = text || ''; }
+
+let toastTimer = null;
+function toast(message, kind = 'info') {
+  const el = $('#toast');
+  el.textContent = message;
+  el.className = 'toast show' + (kind === 'error' ? ' error' : kind === 'ok' ? ' ok' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => { el.className = 'toast'; }, 3400);
+}
+
+// ---------------------------------------------------------------- API
+async function api(path, opts = {}) {
+  const init = { method: opts.method || 'GET', credentials: 'same-origin', headers: new Headers(opts.headers || {}) };
+  if (opts.body !== undefined && opts.body !== null) {
+    init.body = opts.body;
+    if (typeof opts.body === 'string' && !opts.raw && !init.headers.has('Content-Type')) init.headers.set('Content-Type', 'application/json');
+  }
+  const res = await fetch(path, init);
+  const type = res.headers.get('content-type') || '';
+  let data = null;
+  if (type.includes('application/json')) data = await res.json().catch(() => null);
+  else data = await res.text().catch(() => '');
+  if (!res.ok) {
+    const err = new Error((data && data.error) || (typeof data === 'string' && data) || '请求失败');
+    err.status = res.status;
+    throw err;
+  }
+  return data;
+}
+
+function handleApiError(error) {
+  if (error && error.status === 401) { showAuth(); return; }
+  toast((error && error.message) || '操作失败', 'error');
+}
+
+// ---------------------------------------------------------------- 弹窗
+let modalClosers = [];
+function openModal(title, content, actions = [], options = {}) {
+  closeModal();
+  const foot = h('div', { class: 'modal-foot' });
+  const close = () => closeModal();
+  const card = h('div', { class: 'modal', role: 'dialog', 'aria-modal': 'true' },
+    h('div', { class: 'modal-head' }, h('h2', { text: title }), h('button', { class: 'ghost mini', type: 'button', onclick: close, 'aria-label': '关闭', text: '✕' })),
+    content,
+    actions.length ? foot : null
+  );
+  for (const a of actions) {
+    if (!a) continue;
+    foot.append(h('button', { class: a.primary ? 'primary' : a.danger ? 'danger' : '', type: 'button', onclick: a.onClick, text: a.label }));
+  }
+  const backdrop = h('div', { class: 'modal-backdrop' }, card);
+  backdrop.addEventListener('click', e => { if (e.target === backdrop && options.closeOnBackdrop !== false) close(); });
+  const onKey = e => { if (e.key === 'Escape') close(); };
+  document.addEventListener('keydown', onKey);
+  const closer = () => {
+    document.removeEventListener('keydown', onKey);
+    if (backdrop.parentNode) backdrop.remove();
+    modalClosers = modalClosers.filter(x => x !== closer);
+    if (options.onClose) options.onClose();
+  };
+  modalClosers.push(closer);
+  $('#modalRoot').append(backdrop);
+  const input = card.querySelector('input,textarea,select');
+  if (input) setTimeout(() => input.focus(), 30);
+  return { close, card, onClose(fn) { options.onClose = fn; }, setActions(list) { /* reserved */ } };
+}
+function closeModal() { const list = modalClosers.slice(); modalClosers = []; for (const fn of list) fn(); }
+
+function confirmDialog(message, confirmLabel = '确认') {
+  return new Promise(resolve => {
+    let settled = false;
+    const done = v => { if (settled) return; settled = true; resolve(v); };
+    const modal = openModal('请确认', h('p', { class: 'muted', text: message }), [
+      { label: '取消', onClick: () => { done(false); modal.close(); } },
+      { label: confirmLabel, danger: true, onClick: () => { done(true); modal.close(); } },
+    ], { onClose: () => done(false) });
+  });
+}
+
+// ---------------------------------------------------------------- 应用状态
+const app = {
+  me: null,
+  tree: null,
+  meta: null,
+  readOnly: false,
+  visitor: null,
+  view: 'tree',
+  category: '',
+  selected: new Set(),
+  drawerId: null,
+  transform: { x: 40, y: 30, scale: 1 },
+  pan: null,
+  fitted: false,
+  multiDirty: false,
+  ttSelected: null,
+  ttCtrl: null,
+  ttHighlight: '',
+  ttNowTimer: null,
+  ttPetTimer: null,
+  pet: localStorage.getItem('pet') || 'cat',
+  notes: { mode: 'server', list: [], current: null, content: '', preview: false, dir: null, localList: [] },
+  bps: { list: [], category: '', q: '' },
+  friends: { data: null, search: [] },
+  chat: { id: null, timer: null },
+  saveSeq: 0,
+  rateTimer: null,
+};
+
+// ---------------------------------------------------------------- 认证
+let challengeId = null;
+
+function setAuthError(msg) { $('#authError').textContent = msg || ''; }
+
+async function refreshChallenge() {
+  try {
+    const data = await api('/api/auth/challenge');
+    challengeId = data.id;
+    $('#captchaQuestion').textContent = data.question;
+  } catch (e) {
+    $('#captchaQuestion').textContent = '加载失败';
+  }
+}
+
+function switchAuthTab(register) {
+  $('#tabLogin').classList.toggle('active', !register);
+  $('#tabRegister').classList.toggle('active', register);
+  $('#loginForm').hidden = register;
+  $('#registerForm').hidden = !register;
+  setAuthError('');
+  if (register) refreshChallenge();
+}
+
+function showAuth() {
+  $('#appView').hidden = true;
+  $('#authView').hidden = false;
+  stopTtTimers();
+  app.me = null;
+  app.tree = null;
+  app.meta = null;
+  $('#authError').textContent = '';
+}
+
+async function login(event) {
+  event.preventDefault();
+  setAuthError('');
+  const btn = $('#loginForm button[type=submit]');
+  btn.disabled = true;
+  try {
+    const data = await api('/api/auth/login', { method: 'POST', body: JSON.stringify({ name: $('#loginName').value.trim(), password: $('#loginPassword').value }) });
+    app.me = data.user;
+    await enterApp();
+  } catch (e) {
+    setAuthError(e.message || '登录失败');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function register(event) {
+  event.preventDefault();
+  setAuthError('');
+  const name = $('#regName').value.trim();
+  const pwd = $('#regPassword').value;
+  if (pwd !== $('#regConfirm').value) { setAuthError('两次输入的密码不一致'); return; }
+  if (!challengeId) { setAuthError('请先获取验证码'); return; }
+  const btn = $('#registerForm button[type=submit]');
+  btn.disabled = true;
+  try {
+    const data = await api('/api/auth/register', {
+      method: 'POST',
+      body: JSON.stringify({ name, password: pwd, challengeId, answer: Number($('#captchaAnswer').value) }),
+    });
+    app.me = data.user;
+    await enterApp();
+  } catch (e) {
+    setAuthError(e.message || '注册失败');
+    refreshChallenge();
+    $('#captchaAnswer').value = '';
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+async function enterApp() {
+  $('#authView').hidden = true;
+  $('#appView').hidden = false;
+  $('#userBtn').textContent = app.me.name;
+  $('#adminNav').hidden = app.me.role !== 'admin';
+  await loadTree();
+  switchView('tree');
+}
+
+async function logout() {
+  try { await api('/api/auth/logout', { method: 'POST' }); } catch {}
+  closeModal();
+  showAuth();
+}
+
+// ---------------------------------------------------------------- 树：加载与保存
+function findNode(id) { return (app.tree && app.tree.abilities) ? app.tree.abilities.find(a => a.id === id) : null; }
+function groupOf(node) {
+  if (!node) return null;
+  return node.kind === 'group' ? node : findNode(node.parentId);
+}
+function groupCost(g) {
+  return app.tree.abilities.filter(a => a.kind === 'leaf' && a.parentId === g.id).reduce((s, a) => s + (Number(a.cost) || 0), 0);
+}
+
+async function loadTree() {
+  const data = await api('/api/tree');
+  app.tree = data.tree;
+  app.meta = data.meta;
+  app.readOnly = false;
+  app.visitor = null;
+  app.selected.clear();
+  app.drawerId = null;
+  app.fitted = false;
+  $('#drawer').hidden = true;
+  $('#treeView').classList.remove('drawer-open');
+  updateHeader();
+  renderTreeAll();
+}
+
+function updateHeader() {
+  if (!app.meta) return;
+  $('#pointsValue').textContent = fmtNum(app.meta.available);
+  $('#levelValue').textContent = String(app.meta.level);
+  $('#userBtn').textContent = app.me ? app.me.name : '';
+  $('#weekLabel').textContent = app.tree ? app.tree.week.key : '';
+  const pct = app.meta.level >= 15 ? 100 : Math.max(0, Math.min(100, ((app.meta.exp % 100) / 100) * 100));
+  $('#expFill').style.width = pct + '%';
+  $('#expFill').title = `经验 ${app.meta.exp}/1500 · Lv ${app.meta.level}`;
+}
+
+async function persistTree(options = {}) {
+  if (app.readOnly) { toast('访客模式：只读查看', 'error'); return false; }
+  const seq = ++app.saveSeq;
+  setSync('保存中…');
+  try {
+    const data = await api('/api/tree', { method: 'PUT', body: JSON.stringify(app.tree) });
+    if (seq !== app.saveSeq) return true;
+    app.tree = data.tree;
+    app.meta = data.meta;
+    setSync('已保存');
+    updateHeader();
+    if (options.render !== false) {
+      renderSidebar();
+      renderCanvas();
+      renderDrawer();
+      if (app.view === 'timetable') renderTimetable();
+    }
+    return true;
+  } catch (e) {
+    setSync('');
+    handleApiError(e);
+    if (e.status !== 401) { try { await loadTree(); } catch {} }
+    return false;
+  }
+}
+
+function renderTreeAll() {
+  renderToolbar();
+  renderVisitorBanner();
+  renderSidebar();
+  renderCanvas();
+  renderDrawer();
+  if (app.view === 'timetable') renderTimetable();
+}
+
+function renderVisitorBanner() {
+  const el = $('#visitorBanner');
+  if (!el) return;
+  el.hidden = !app.readOnly;
+  if (app.readOnly && app.visitor) {
+    el.replaceChildren(
+      h('span', { text: `只读查看：${app.visitor.name} 的成长树` }),
+      h('button', { class: 'mini ghost', type: 'button', text: '返回我的树', onclick: () => loadTree().then(() => toast('已返回自己的树', 'ok')) })
+    );
+  }
+}
+
+// ---------------------------------------------------------------- 侧栏
+function renderSidebar() {
+  const side = $('#treeSide');
+  if (!side) return;
+  side.replaceChildren();
+  side.append(h('div', { class: 'side-head' },
+    h('h2', { text: app.readOnly ? '访客浏览' : '我的成长树' }),
+    h('button', { class: 'ghost mini', type: 'button', text: '全部', onclick: () => { app.category = ''; renderSidebar(); renderCanvas(); } })
+  ));
+  const cats = (app.tree && app.tree.categories) || [];
+  for (const cat of cats) {
+    const groups = app.tree.abilities.filter(a => a.kind === 'group' && a.categoryId === cat.id);
+    const sec = h('section', { class: 'cat' + (app.category === cat.id ? ' active' : '') });
+    const head = h('div', { class: 'cat-head' });
+    head.append(h('button', { class: 'cat-name', type: 'button', text: cat.name, onclick: () => { app.category = app.category === cat.id ? '' : cat.id; renderSidebar(); renderCanvas(); } }));
+    head.append(h('span', { class: 'cat-count', text: String(groups.length) }));
+    if (!app.readOnly) {
+      const tools = h('span', { class: 'cat-tools' });
+      tools.append(h('button', { class: 'mini ghost', type: 'button', text: '+', title: '在此分类新建能力组', onclick: () => openNodeModal('group', { categoryId: cat.id }) }));
+      tools.append(h('button', { class: 'mini ghost', type: 'button', text: '✎', title: '重命名分类', onclick: () => openCategoryModal(cat) }));
+      tools.append(h('button', { class: 'mini ghost', type: 'button', text: '×', title: '删除分类', onclick: () => deleteCategory(cat) }));
+      head.append(tools);
+    }
+    sec.append(head);
+    sec.addEventListener('dragover', e => { if (!app.readOnly) e.preventDefault(); });
+    sec.addEventListener('drop', e => {
+      if (app.readOnly) return;
+      e.preventDefault();
+      const id = e.dataTransfer.getData('text/plain');
+      const node = findNode(id);
+      if (node && node.kind === 'group') { node.categoryId = cat.id; persistTree(); }
+    });
+    if (!groups.length) {
+      sec.append(h('div', { class: 'empty', text: '暂无能力组' }));
+    }
+    for (const g of groups) {
+      sec.append(sidebarRow(g, false));
+      const leaves = app.tree.abilities.filter(a => a.kind === 'leaf' && a.parentId === g.id);
+      for (const leaf of leaves) sec.append(sidebarRow(leaf, true));
+    }
+    side.append(sec);
+  }
+  if (!app.readOnly) {
+    side.append(h('div', { class: 'side-actions' },
+      h('button', { type: 'button', text: '＋ 能力组', onclick: () => openNodeModal('group') }),
+      h('button', { type: 'button', text: '＋ 知识点', onclick: () => openNodeModal('leaf') }),
+      h('button', { type: 'button', class: 'wide', text: '＋ 已掌握知识点', onclick: () => openNodeModal('leaf', { mastered: true }) }),
+      h('button', { type: 'button', text: '＋ 分类', onclick: () => openCategoryModal(null) })
+    ));
+  }
+}
+
+function sidebarRow(node, isLeaf) {
+  const row = h('div', {
+    class: 'side-node' + (isLeaf ? ' leaf' : ''),
+    draggable: !app.readOnly,
+    title: node.name,
+    onclick: () => openDrawer(node.id),
+  });
+  row.append(h('span', { class: 'dot' + (node.unlocked ? ' on' : '') }));
+  row.append(h('span', { class: 'nm', text: node.name }));
+  row.append(h('span', { class: 'cost', text: node.kind === 'group' ? `Σ${groupCost(node)}` : String(node.cost) }));
+  if (!app.readOnly) {
+    row.addEventListener('dragstart', e => {
+      e.dataTransfer.setData('text/plain', node.id);
+      e.dataTransfer.effectAllowed = 'move';
+    });
+    row.addEventListener('dragover', e => e.preventDefault());
+    row.addEventListener('drop', e => {
+      e.preventDefault();
+      const id = e.dataTransfer.getData('text/plain');
+      if (!id || id === node.id) return;
+      const dragged = findNode(id);
+      if (!dragged) return;
+      if (dragged.kind === 'leaf' && node.kind === 'group') {
+        dragged.parentId = node.id;
+        dragged.prereqIds = [];
+      } else if (dragged.kind === node.kind) {
+        const list = app.tree.abilities;
+        const from = list.findIndex(a => a.id === id);
+        const to = list.findIndex(a => a.id === node.id);
+        list.splice(from, 1);
+        list.splice(to, 0, dragged);
+        if (dragged.kind === 'group') dragged.categoryId = node.categoryId;
+        else dragged.parentId = node.parentId;
+      } else {
+        toast('不同层级的节点不能互相排序', 'error');
+        return;
+      }
+      persistTree();
+    });
+  }
+  return row;
+}
+
+function openCategoryModal(cat) {
+  const name = h('input', { maxlength: 30, value: cat ? cat.name : '', placeholder: '例如：语言、设计、生活' });
+  const modal = openModal(cat ? '重命名分类' : '新建分类', h('div', {}, h('label', { text: '分类名称' }), name), [
+    { label: '取消', onClick: () => modal.close() },
+    { label: '保存', primary: true, onClick: async () => {
+      const value = name.value.trim();
+      if (!value) { toast('分类名称不能为空', 'error'); return; }
+      if (cat) cat.name = value;
+      else app.tree.categories.push({ id: 'cat_' + uuid().replace(/-/g, '').slice(0, 10), name: value });
+      modal.close();
+      await persistTree();
+    } },
+  ]);
+}
+
+async function deleteCategory(cat) {
+  const has = app.tree.abilities.some(a => a.kind === 'group' && a.categoryId === cat.id);
+  if (has) { toast('该分类下还有能力组，先移动或删除它们', 'error'); return; }
+  if (app.tree.categories.length <= 1) { toast('至少保留一个分类', 'error'); return; }
+  if (!(await confirmDialog(`删除分类「${cat.name}」？`, '删除'))) return;
+  app.tree.categories = app.tree.categories.filter(c => c.id !== cat.id);
+  await persistTree();
+}
+
+// ---------------------------------------------------------------- 画布
+function leafDepth(leaf, leavesById, memo, seen) {
+  if (memo.has(leaf.id)) return memo.get(leaf.id);
+  if (seen.has(leaf.id)) return 0;
+  seen.add(leaf.id);
+  let d = 0;
+  for (const pid of leaf.prereqIds || []) {
+    const pre = leavesById.get(pid);
+    if (pre) d = Math.max(d, leafDepth(pre, leavesById, memo, seen) + 1);
+  }
+  seen.delete(leaf.id);
+  d = Math.min(d, 8);
+  memo.set(leaf.id, d);
+  return d;
+}
+
+function renderCanvas() {
+  if (!app.tree) return;
+  const layer = $('#canvasLayer');
+  layer.replaceChildren();
+  const groups = app.tree.abilities.filter(a => a.kind === 'group' && (!app.category || a.categoryId === app.category));
+  let cursorY = 22;
+  let maxWidth = 400;
+  for (const g of groups) {
+    const leaves = app.tree.abilities.filter(a => a.kind === 'leaf' && a.parentId === g.id);
+    const leavesById = new Map(leaves.map(l => [l.id, l]));
+    const depthMemo = new Map();
+    for (const leaf of leaves) leafDepth(leaf, leavesById, depthMemo, new Set());
+    const columns = new Map();
+    for (const leaf of leaves) {
+      const d = depthMemo.get(leaf.id) || 0;
+      if (!columns.has(d)) columns.set(d, []);
+      columns.get(d).push(leaf);
+    }
+    const depths = [...columns.keys()].sort((a, b) => a - b);
+    const maxDepth = depths.length ? depths[depths.length - 1] : 0;
+    const rowsById = new Map();
+    let nextRow = 0;
+    for (const d of depths) {
+      const list = columns.get(d);
+      list.sort((a, b) => {
+        const aa = (a.prereqIds || []).map(id => rowsById.get(id)).filter(v => Number.isFinite(v));
+        const bb = (b.prereqIds || []).map(id => rowsById.get(id)).filter(v => Number.isFinite(v));
+        const av = aa.length ? aa.reduce((s, v) => s + v, 0) / aa.length : (Number(a.oy) || 0) / 1000;
+        const bv = bb.length ? bb.reduce((s, v) => s + v, 0) / bb.length : (Number(b.oy) || 0) / 1000;
+        return av - bv || String(a.name).localeCompare(String(b.name), 'zh');
+      });
+      let row = 0;
+      for (const leaf of list) {
+        rowsById.set(leaf.id, row);
+        row++;
+      }
+      nextRow = Math.max(nextRow, list.length);
+    }
+    const width = Math.max(320, 44 + (maxDepth + 1) * 218);
+    const height = 58 + Math.max(1, nextRow) * 96 + 16;
+    const box = h('div', { class: 'cgroup' });
+    box.style.left = '22px';
+    box.style.top = cursorY + 'px';
+    box.style.width = width + 'px';
+    box.style.height = height + 'px';
+    const cat = app.tree.categories.find(c => c.id === g.categoryId);
+    const head = h('div', { class: 'cgroup-head' + (app.selected.has(g.id) ? ' selected' : '') });
+    head.append(h('span', { class: 'cgroup-title', text: g.name }));
+    head.append(h('span', { class: 'cgroup-meta', text: `Σ ${groupCost(g)} · ${leaves.length} 个知识点` }));
+    head.append(h('span', { class: 'pill mutedp', text: cat ? cat.name : '未分类' }));
+    head.addEventListener('click', e => {
+      e.stopPropagation();
+      if (e.ctrlKey || e.metaKey) toggleSelect(g.id);
+      else openDrawer(g.id);
+    });
+    box.append(head);
+
+    const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+    svg.setAttribute('width', String(width));
+    svg.setAttribute('height', String(height));
+    svg.style.position = 'absolute';
+    svg.style.left = '0';
+    svg.style.top = '0';
+    svg.style.pointerEvents = 'none';
+
+    const positions = new Map();
+    for (const leaf of leaves) {
+      const d = depthMemo.get(leaf.id) || 0;
+      const row = rowsById.get(leaf.id) || 0;
+      const x = 22 + d * 218;
+      const y = 58 + row * 96;
+      positions.set(leaf.id, { x, y });
+    }
+    for (const leaf of leaves) {
+      const pos = positions.get(leaf.id);
+      for (const pid of leaf.prereqIds || []) {
+        const pre = positions.get(pid);
+        if (!pre) continue;
+        const path = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const x1 = pre.x + 190, y1 = pre.y + 38, x2 = pos.x, y2 = pos.y + 38;
+        const mid = (x1 + x2) / 2;
+        path.setAttribute('d', `M ${x1} ${y1} C ${mid} ${y1}, ${mid} ${y2}, ${x2} ${y2}`);
+        path.setAttribute('fill', 'none');
+        path.setAttribute('stroke', 'rgba(124,156,255,.35)');
+        path.setAttribute('stroke-width', '1.5');
+        path.setAttribute('stroke-dasharray', '4 4');
+        svg.append(path);
+      }
+    }
+    box.append(svg);
+
+    for (const leaf of leaves) {
+      const pos = positions.get(leaf.id);
+      const card = h('div', {
+        class: 'cnode ' + (leaf.unlocked ? 'unlocked' : 'locked') + (app.selected.has(leaf.id) ? ' selected' : ''),
+        title: leaf.name,
+        onclick: e => {
+          e.stopPropagation();
+          if (e.ctrlKey || e.metaKey) toggleSelect(leaf.id);
+          else openDrawer(leaf.id);
+        },
+      });
+      card.style.left = pos.x + 'px';
+      card.style.top = pos.y + 'px';
+      card.append(h('span', { class: 'n-badge' }));
+      card.append(h('div', { class: 'n-title', text: leaf.name }));
+      const metaRow = h('div', { class: 'n-meta' });
+      metaRow.append(h('span', { class: 'n-cost', text: `${leaf.cost} 点` }));
+      if (leaf.prereqIds && leaf.prereqIds.length) metaRow.append(h('span', { text: `前置 ${leaf.prereqIds.length}` }));
+      metaRow.append(h('span', { class: 'pill ' + (leaf.unlocked ? 'ok' : 'mutedp'), text: leaf.unlocked ? '已点亮' : '未点亮' }));
+      card.append(metaRow);
+      if (leaf.note) card.append(h('div', { class: 'n-note', text: leaf.note }));
+      box.append(card);
+    }
+
+    layer.append(box);
+    cursorY += height + 22;
+    maxWidth = Math.max(maxWidth, width + 44);
+  }
+  if (!groups.length) {
+    const empty = h('div', { class: 'empty', text: app.readOnly ? '对方还没有能力组。' : '还没有能力组，先从左侧「＋ 能力组」开始吧。' });
+    empty.style.position = 'absolute';
+    empty.style.left = '40px';
+    empty.style.top = '80px';
+    layer.append(empty);
+  }
+  layer.style.width = maxWidth + 'px';
+  layer.style.height = Math.max(cursorY, 300) + 'px';
+  applyTransform();
+  renderMultiBar();
+  if (!app.fitted && groups.length) {
+    app.fitted = true;
+    setTimeout(fitView, 20);
+  }
+}
+
+function applyTransform() {
+  const layer = $('#canvasLayer');
+  if (!layer) return;
+  layer.style.transform = `translate(${app.transform.x}px, ${app.transform.y}px) scale(${app.transform.scale})`;
+}
+
+function fitView() {
+  const wrap = $('#canvasWrap');
+  const layer = $('#canvasLayer');
+  if (!wrap || !layer) return;
+  const w = layer.offsetWidth || 600;
+  const h = layer.offsetHeight || 400;
+  const barH = ($('#canvasToolbar')?.offsetHeight || 36) + 16;
+  const vw = wrap.clientWidth - 40;
+  const availH = Math.max(160, wrap.clientHeight - barH - 16);
+  const scale = Math.max(0.25, Math.min(1.15, vw / w, availH / h));
+  app.transform.scale = scale;
+  app.transform.x = Math.max(16, (wrap.clientWidth - w * scale) / 2);
+  app.transform.y = barH + Math.max(4, (availH - h * scale) / 2);
+  applyTransform();
+}
+
+function toggleSelect(id) {
+  if (app.selected.has(id)) app.selected.delete(id);
+  else app.selected.add(id);
+  renderCanvas();
+  if (findNode(id) && app.drawerId) renderDrawer();
+}
+
+function renderMultiBar() {
+  const bar = $('#multiBar');
+  if (!bar) return;
+  bar.hidden = app.selected.size === 0;
+  if (!app.selected.size) return;
+  bar.replaceChildren(
+    h('span', { text: `已选 ${app.selected.size} 个` }),
+    h('button', { class: 'danger mini', type: 'button', text: '删除所选', onclick: deleteSelected }),
+    h('button', { class: 'ghost mini', type: 'button', text: '取消', onclick: () => { app.selected.clear(); renderCanvas(); } })
+  );
+}
+
+async function deleteSelected() {
+  if (app.readOnly) return;
+  if (!(await confirmDialog(`删除选中的 ${app.selected.size} 个节点？其子知识点和前置引用也会一并清理。`, '删除'))) return;
+  const ids = new Set(app.selected);
+  for (const node of app.tree.abilities) if (node.kind === 'group' && ids.has(node.id)) ids.add(node.id);
+  app.tree.abilities = app.tree.abilities.filter(a => {
+    if (a.kind === 'leaf' && ids.has(a.parentId)) return false;
+    return !ids.has(a.id);
+  });
+  for (const a of app.tree.abilities) a.prereqIds = (a.prereqIds || []).filter(id => !ids.has(id));
+  app.selected.clear();
+  app.drawerId = null;
+  const ok = await persistTree();
+  if (ok) toast('已删除', 'ok');
+}
+
+// 平移与缩放
+function bindCanvas() {
+  const wrap = $('#canvasWrap');
+  wrap.addEventListener('wheel', e => {
+    e.preventDefault();
+    const rect = wrap.getBoundingClientRect();
+    const sx = e.clientX - rect.left;
+    const sy = e.clientY - rect.top;
+    const old = app.transform;
+    const scale = Math.max(0.25, Math.min(2.4, old.scale * Math.exp(-e.deltaY * 0.0015)));
+    const k = scale / old.scale;
+    app.transform = { scale, x: sx - (sx - old.x) * k, y: sy - (sy - old.y) * k };
+    applyTransform();
+  }, { passive: false });
+
+  wrap.addEventListener('pointerdown', e => {
+    if (e.button !== 0) return;
+    if (e.target.closest('.cnode, .cgroup-head, .multi-bar, .canvas-toolbar, .visitor-banner')) return;
+    app.pan = { startX: e.clientX, startY: e.clientY, x: app.transform.x, y: app.transform.y, moved: false };
+    wrap.setPointerCapture(e.pointerId);
+  });
+  wrap.addEventListener('pointermove', e => {
+    if (!app.pan) return;
+    const dx = e.clientX - app.pan.startX;
+    const dy = e.clientY - app.pan.startY;
+    if (Math.abs(dx) + Math.abs(dy) > 3) app.pan.moved = true;
+    app.transform.x = app.pan.x + dx;
+    app.transform.y = app.pan.y + dy;
+    applyTransform();
+  });
+  wrap.addEventListener('pointerup', e => {
+    const pan = app.pan;
+    app.pan = null;
+    if (pan && !pan.moved && app.selected.size) {
+      app.selected.clear();
+      renderCanvas();
+    }
+  });
+  wrap.addEventListener('pointercancel', () => { app.pan = null; });
+}
+
+function renderToolbar() {
+  const bar = $('#canvasToolbar');
+  if (!bar) return;
+  bar.replaceChildren();
+  if (!app.readOnly) {
+    bar.append(h('button', { class: 'primary', type: 'button', text: '＋ 能力组', onclick: () => openNodeModal('group') }));
+    bar.append(h('button', { type: 'button', text: '＋ 知识点', onclick: () => openNodeModal('leaf') }));
+    bar.append(h('button', { type: 'button', text: '＋ 已掌握', onclick: () => openNodeModal('leaf', { mastered: true }) }));
+    bar.append(h('button', { type: 'button', text: '整理无效节点', onclick: pruneTree }));
+  }
+  bar.append(h('span', { class: 'grow' }));
+  bar.append(h('button', { class: 'mini', type: 'button', text: '−', title: '缩小', onclick: () => zoomBy(0.85) }));
+  bar.append(h('button', { class: 'mini', type: 'button', text: '+', title: '放大', onclick: () => zoomBy(1.18) }));
+  bar.append(h('button', { class: 'mini', type: 'button', text: '适配', title: '自适应视图', onclick: fitView }));
+}
+
+function zoomBy(k) {
+  const wrap = $('#canvasWrap');
+  const sx = wrap.clientWidth / 2;
+  const sy = wrap.clientHeight / 2;
+  const old = app.transform;
+  const scale = Math.max(0.25, Math.min(2.4, old.scale * k));
+  const ratio = scale / old.scale;
+  app.transform = { scale, x: sx - (sx - old.x) * ratio, y: sy - (sy - old.y) * ratio };
+  applyTransform();
+}
+
+async function pruneTree() {
+  if (app.readOnly) return;
+  try {
+    const data = await api('/api/prune', { method: 'POST', body: '{}' });
+    app.tree = data.tree;
+    app.meta = data.meta;
+    toast(data.removed ? `已清理 ${data.removed} 个无效节点` : '没有发现无效节点', 'ok');
+    renderTreeAll();
+    updateHeader();
+  } catch (e) { handleApiError(e); }
+}
+
+// ---------------------------------------------------------------- 抽屉
+function openDrawer(id) {
+  const node = findNode(id);
+  if (!node) return;
+  app.drawerId = id;
+  app.selected.clear();
+  renderCanvas();
+  renderDrawer();
+}
+
+function closeDrawer() {
+  app.drawerId = null;
+  $('#drawer').hidden = true;
+  $('#treeView').classList.remove('drawer-open');
+}
+
+function renderDrawer() {
+  const drawer = $('#drawer');
+  if (!drawer) return;
+  if (!app.drawerId) { drawer.hidden = true; $('#treeView').classList.remove('drawer-open'); return; }
+  const node = findNode(app.drawerId);
+  if (!node) { app.drawerId = null; drawer.hidden = true; $('#treeView').classList.remove('drawer-open'); return; }
+  drawer.hidden = false;
+  $('#treeView').classList.add('drawer-open');
+  drawer.replaceChildren();
+
+  const group = groupOf(node);
+  const cat = node.kind === 'group' ? app.tree.categories.find(c => c.id === node.categoryId) : null;
+  const head = h('div', { class: 'drawer-head' },
+    h('div', {},
+      h('div', { class: 'drawer-title', text: node.name }),
+      h('div', { class: 'drawer-sub', text: node.kind === 'group' ? `能力组 · Σ ${groupCost(node)} 点 · ${cat ? cat.name : '未分类'}` : `知识点 · ${node.cost} 点 · ${node.unlocked ? '已点亮' : '未点亮'}` })
+    ),
+    h('button', { class: 'ghost mini', type: 'button', text: '✕', onclick: closeDrawer })
+  );
+  drawer.append(head);
+
+  if (app.readOnly) {
+    drawer.append(h('div', { class: 'hint-line', text: '访客模式：只读查看，不能修改对方的内容。' }));
+    drawer.append(h('div', { class: 'hr' }));
+    drawer.append(h('div', { class: 'kv' },
+      h('span', { class: 'k', text: '节点类型' }), h('span', { class: 'v', text: node.kind === 'group' ? '能力组' : '知识点' }),
+      h('span', { class: 'k', text: '成本' }), h('span', { class: 'v mono', text: String(node.cost) }),
+      h('span', { class: 'k', text: '状态' }), h('span', { class: 'v', text: node.unlocked ? '已点亮' : '未点亮' })
+    ));
+    if (node.prereqIds && node.prereqIds.length) {
+      drawer.append(h('label', { text: '前置知识点' }));
+      const chips = h('div', { class: 'chips' });
+      for (const pid of node.prereqIds) {
+        const pre = findNode(pid);
+        if (pre) chips.append(h('span', { class: 'chip', text: pre.name }));
+      }
+      drawer.append(chips);
+    }
+    if (node.note) { drawer.append(h('label', { text: '学习记录' })); drawer.append(h('div', { class: 'hint-line', text: node.note })); }
+    if (node.photos && node.photos.length) {
+      drawer.append(h('label', { text: '照片' }));
+      const grid = h('div', { class: 'photo-grid' });
+      for (const p of node.photos) grid.append(h('div', { class: 'photo-item' }, h('img', { src: `/api/photos/${encodeURIComponent(p.storedAs)}`, alt: p.name, loading: 'lazy' })));
+      drawer.append(grid);
+    }
+    if (node.kind === 'group') {
+      const leaves = app.tree.abilities.filter(a => a.kind === 'leaf' && a.parentId === node.id);
+      drawer.append(h('label', { text: `包含知识点（${leaves.length}）` }));
+      const chips = h('div', { class: 'chips' });
+      for (const leaf of leaves) chips.append(h('span', { class: 'chip' + (leaf.unlocked ? ' on' : ''), text: `${leaf.name} · ${leaf.cost}` }));
+      drawer.append(chips);
+    }
+    return;
+  }
+
+  const form = h('form', {});
+  form.append(h('label', { text: '名称' }));
+  const nameInput = h('input', { maxlength: 40, value: node.name, required: true });
+  form.append(nameInput);
+
+  let costInput = null;
+  let catSelect = null;
+  if (node.kind === 'leaf') {
+    form.append(h('label', { text: '成本（科技点）' }));
+    costInput = h('input', { type: 'number', min: 1, max: 100000, step: 1, value: node.cost, required: true });
+    form.append(costInput);
+  } else {
+    const total = groupCost(node);
+    form.append(h('div', { class: 'hint-line', text: `能力组成本自动等于其下知识点成本之和：Σ ${total}` }));
+    form.append(h('label', { text: '所属分类' }));
+    catSelect = h('select', {});
+    for (const c of app.tree.categories) catSelect.append(h('option', { value: c.id, text: c.name, selected: c.id === node.categoryId }));
+    form.append(catSelect);
+  }
+
+  const prereqSet = new Set(node.prereqIds || []);
+  if (node.kind === 'leaf' && node.parentId) {
+    const siblings = app.tree.abilities.filter(a => a.kind === 'leaf' && a.parentId === node.parentId && a.id !== node.id);
+    form.append(h('label', { text: `前置知识点（最多 8 个，必须同组）` }));
+    if (!siblings.length) form.append(h('div', { class: 'hint-line', text: '该组暂无其他知识点可作为前置。' }));
+    else {
+      const chips = h('div', { class: 'chips' });
+      for (const s of siblings) {
+        const chip = h('button', { class: 'chip' + (prereqSet.has(s.id) ? ' on' : ''), type: 'button', text: `${s.name}${s.unlocked ? ' ✓' : ''}` });
+        chip.addEventListener('click', () => {
+          if (prereqSet.has(s.id)) prereqSet.delete(s.id);
+          else {
+            if (prereqSet.size >= 8) { toast('最多 8 个前置', 'error'); return; }
+            prereqSet.add(s.id);
+          }
+          chip.classList.toggle('on', prereqSet.has(s.id));
+        });
+        chips.append(chip);
+      }
+      form.append(chips);
+    }
+  }
+
+  form.append(h('label', { text: '学习记录' }));
+  const noteInput = h('textarea', { maxlength: 5000, placeholder: '记录你的学习过程、资料链接或心得…' });
+  noteInput.value = node.note || '';
+  form.append(noteInput);
+
+  drawer.append(form);
+
+  drawer.append(h('label', { text: `照片（${(node.photos || []).length}/3）` }));
+  const grid = h('div', { class: 'photo-grid' });
+  for (const p of node.photos || []) {
+    const item = h('div', { class: 'photo-item' });
+    item.append(h('img', { src: `/api/photos/${encodeURIComponent(p.storedAs)}`, alt: p.name, loading: 'lazy' }));
+    item.append(h('button', { class: 'x', type: 'button', text: '×', title: '删除照片', onclick: async () => {
+      try {
+        await api(`/api/photos/${encodeURIComponent(p.storedAs)}`, { method: 'DELETE' });
+        toast('照片已删除', 'ok');
+        await loadTree();
+        openDrawer(node.id);
+      } catch (e) { handleApiError(e); }
+    } }));
+    grid.append(item);
+  }
+  drawer.append(grid);
+  if ((node.photos || []).length < 3) {
+    const fileInput = h('input', { type: 'file', accept: 'image/png,image/jpeg,image/webp,image/gif' });
+    fileInput.style.marginTop = '6px';
+    fileInput.addEventListener('change', async () => {
+      const file = fileInput.files && fileInput.files[0];
+      if (!file) return;
+      if (file.size > 8 * 1024 * 1024) { toast('图片不能超过 8MB', 'error'); return; }
+      try {
+        setSync('上传中…');
+        const res = await fetch(`/api/photos?nodeId=${encodeURIComponent(node.id)}&name=${encodeURIComponent(file.name)}`, {
+          method: 'POST', credentials: 'same-origin', headers: { 'Content-Type': file.type || 'application/octet-stream' }, body: file,
+        });
+        const data = await res.json().catch(() => ({}));
+        if (!res.ok) throw new Error(data.error || '上传失败');
+        setSync('已保存');
+        toast('照片已上传', 'ok');
+        await loadTree();
+        openDrawer(node.id);
+      } catch (e) { setSync(''); handleApiError(e); }
+    });
+    drawer.append(fileInput);
+  }
+
+  if (node.kind === 'leaf') {
+    const available = Number(app.meta.available) || 0;
+    if (node.unlocked) {
+      drawer.append(h('div', { class: 'hint-line', text: `已点亮 · 累计获得经验 ${node.cost * 10}（每周上限 1500）` }));
+    } else {
+      const affordable = available + 1e-9 >= node.cost;
+      const unlockBtn = h('button', {
+        class: 'primary wide', type: 'button', text: `点亮（消耗 ${node.cost} 科技点）`,
+        disabled: !affordable,
+        title: affordable ? '' : `科技点不足，还差 ${fmtNum(Math.max(0, node.cost - available))}`,
+      });
+      unlockBtn.addEventListener('click', async () => {
+        node.unlocked = true;
+        const ok = await persistTree();
+        if (ok) toast(`「${node.name}」已点亮`, 'ok');
+      });
+      form.append(h('div', { class: 'hint-line', text: affordable ? `可用 ${fmtNum(available)} 点，点亮后剩余 ${fmtNum(available - node.cost)} 点。` : `可用 ${fmtNum(available)} 点，还差 ${fmtNum(node.cost - available)} 点。` }));
+      form.append(h('div', { class: 'drawer-actions wide' }, unlockBtn));
+    }
+  }
+
+  if (node.kind === 'group') {
+    const leaves = app.tree.abilities.filter(a => a.kind === 'leaf' && a.parentId === node.id);
+    drawer.append(h('label', { text: `包含知识点（${leaves.length}）` }));
+    if (leaves.length) {
+      const list = h('div', { class: 'tt-list' });
+      for (const leaf of leaves) {
+        const row = h('div', { class: 'tt-list-row', onclick: () => openDrawer(leaf.id) });
+        row.append(h('span', { text: leaf.unlocked ? '●' : '○' }));
+        row.append(h('span', { class: 'nm', text: leaf.name }));
+        row.append(h('span', { class: 'cnt', text: String(leaf.cost) }));
+        list.append(row);
+      }
+      drawer.append(list);
+    } else {
+      drawer.append(h('div', { class: 'hint-line', text: '暂无知识点，可从左侧「＋ 知识点」添加。' }));
+    }
+  }
+
+  const actions = h('div', { class: 'drawer-actions' });
+  const saveBtn = h('button', { class: 'primary wide', type: 'submit', text: '保存修改' });
+  form.append(actions);
+  actions.append(saveBtn);
+  actions.append(h('button', { class: 'danger', type: 'button', text: '删除节点', onclick: async () => {
+    const label = node.kind === 'group' ? `删除能力组「${node.name}」及其所有知识点？` : `删除知识点「${node.name}」？`;
+    if (!(await confirmDialog(label, '删除'))) return;
+    const ids = new Set([node.id]);
+    if (node.kind === 'group') for (const a of app.tree.abilities) if (a.parentId === node.id) ids.add(a.id);
+    app.tree.abilities = app.tree.abilities.filter(a => !ids.has(a.id));
+    for (const a of app.tree.abilities) a.prereqIds = (a.prereqIds || []).filter(id => !ids.has(id));
+    closeDrawer();
+    const ok = await persistTree();
+    if (ok) toast('已删除', 'ok');
+  } }));
+
+  form.addEventListener('submit', async e => {
+    e.preventDefault();
+    const name = nameInput.value.trim();
+    if (!name) { toast('名称不能为空', 'error'); return; }
+    if (name.length > 40) { toast('名称最多 40 个字符', 'error'); return; }
+    node.name = name;
+    if (node.kind === 'leaf') {
+      const cost = Math.round(Number(costInput.value));
+      if (!Number.isInteger(cost) || cost < 1 || cost > 100000) { toast('成本需为 1–100000 的整数', 'error'); return; }
+      node.cost = cost;
+      node.prereqIds = [...prereqSet];
+    } else {
+      node.categoryId = catSelect.value;
+    }
+    node.note = noteInput.value.slice(0, 5000);
+    const ok = await persistTree();
+    if (ok) toast('已保存', 'ok');
+  });
+}
+
+// ---------------------------------------------------------------- 新建节点
+function openNodeModal(kind = 'leaf', preset = {}) {
+  if (app.readOnly) return;
+  let currentKind = kind;
+  const groups = app.tree.abilities.filter(a => a.kind === 'group');
+  if (currentKind === 'leaf' && !groups.length) {
+    toast('请先创建一个能力组', 'error');
+    currentKind = 'group';
+  }
+  const name = h('input', { maxlength: 40, placeholder: currentKind === 'group' ? '例如：前端开发' : '例如：JavaScript 基础' });
+  const kindSelect = h('select', {},
+    h('option', { value: 'group', text: '能力组（无父节点，带分类）', selected: currentKind === 'group' }),
+    h('option', { value: 'leaf', text: '知识点（挂在能力组下）', selected: currentKind === 'leaf' })
+  );
+  const cost = h('input', { type: 'number', min: 1, max: 100000, step: 1, value: preset.mastered ? 1 : 3 });
+  const parent = h('select', {});
+  groups.forEach(g => parent.append(h('option', { value: g.id, text: g.name, selected: preset.parentId === g.id })));
+  const category = h('select', {});
+  app.tree.categories.forEach(c => category.append(h('option', { value: c.id, text: c.name, selected: (preset.categoryId || c.id) === c.id })));
+  const mastered = h('input', { type: 'checkbox', checked: !!preset.mastered });
+  mastered.style.width = 'auto';
+  const prereqBox = h('div', {});
+  const prereqSet = new Set();
+  const catBlock = h('div', {}, h('label', { text: '所属分类' }), category);
+  const leafBlock = h('div', {},
+    h('label', { text: '父能力组' }), parent,
+    h('label', { text: '成本（科技点）' }), cost,
+    h('label', { class: 'row' }, mastered, h('span', { text: '新增已掌握（直接点亮，不扣科技点）' })),
+    h('label', { text: '前置知识点（可选，必须已点亮）' }), prereqBox
+  );
+  function renderPrereqs() {
+    prereqBox.replaceChildren();
+    const gid = parent.value;
+    const siblings = app.tree.abilities.filter(a => a.kind === 'leaf' && a.parentId === gid);
+    if (!siblings.length) { prereqBox.append(h('div', { class: 'hint-line', text: '该组还没有其他知识点。' })); return; }
+    const chips = h('div', { class: 'chips' });
+    for (const s of siblings) {
+      const chip = h('button', { class: 'chip', type: 'button', text: `${s.name}${s.unlocked ? ' ✓' : ' (未点亮)'}` });
+      chip.addEventListener('click', () => {
+        if (prereqSet.has(s.id)) prereqSet.delete(s.id);
+        else { if (prereqSet.size >= 8) { toast('最多 8 个前置', 'error'); return; } prereqSet.add(s.id); }
+        chip.classList.toggle('on', prereqSet.has(s.id));
+      });
+      chips.append(chip);
+    }
+    prereqBox.append(chips);
+  }
+  function syncKind() {
+    currentKind = kindSelect.value;
+    catBlock.hidden = currentKind !== 'group';
+    leafBlock.hidden = currentKind !== 'leaf';
+    if (currentKind === 'leaf' && !groups.length) { toast('请先创建能力组', 'error'); kindSelect.value = 'group'; syncKind(); return; }
+    if (currentKind === 'leaf') renderPrereqs();
+  }
+  kindSelect.addEventListener('change', syncKind);
+  parent.addEventListener('change', renderPrereqs);
+
+  const content = h('div', {}, h('label', { text: '节点类型' }), kindSelect, h('label', { text: '名称' }), name, catBlock, leafBlock,
+    h('div', { class: 'hint-line', text: '能力组成本自动等于其下知识点成本之和；能力组需要选择分类。' }));
+  if (currentKind === 'leaf') renderPrereqs();
+  catBlock.hidden = currentKind !== 'group';
+  leafBlock.hidden = currentKind !== 'leaf';
+
+  const modal = openModal('新建节点', content, [
+    { label: '取消', onClick: () => modal.close() },
+    { label: '创建', primary: true, onClick: async () => {
+      const value = name.value.trim();
+      if (!value) { toast('名称不能为空', 'error'); return; }
+      if (value.length > 40) { toast('名称最多 40 个字符', 'error'); return; }
+      const k = kindSelect.value;
+      const node = {
+        id: uuid(), name: value, cost: 1, unlocked: false, kind: k,
+        parentId: k === 'leaf' ? parent.value : null,
+        prereqIds: k === 'leaf' ? [...prereqSet] : [],
+        categoryId: k === 'group' ? category.value : null,
+        ox: 0, oy: app.tree.abilities.length * 10, note: '', photos: [],
+      };
+      if (k === 'leaf') {
+        node.cost = Math.round(Number(cost.value));
+        if (!Number.isInteger(node.cost) || node.cost < 1 || node.cost > 100000) { toast('成本需为 1–100000 的整数', 'error'); return; }
+        node.unlocked = mastered.checked;
+      }
+      app.tree.abilities.push(node);
+      modal.close();
+      const ok = await persistTree();
+      if (ok) toast('已创建', 'ok');
+    } },
+  ]);
+}
+
+// ---------------------------------------------------------------- 课表
+function ttTable() {
+  if (!app.tree) return { courses: [], plans: [] };
+  const key = app.tree.week.key;
+  if (!app.tree.timer.weeks[key]) app.tree.timer.weeks[key] = { courses: [], plans: [] };
+  return app.tree.timer.weeks[key];
+}
+
+function renderTimetable() {
+  const view = $('#timetableView');
+  if (!view || !app.tree) return;
+  const scrollTop = (view.querySelector('.tt-scroll') || {}).scrollTop || 0;
+  view.replaceChildren();
+  const table = ttTable();
+  const meta = app.meta || { available: 0, remainingMinutes: 0, rate: 0, bonus: 0, used: 0 };
+  const top = h('div', { class: 'tt-top' },
+    h('h1', { text: '本周课表' }),
+    h('span', { class: 'pill', text: app.tree.week.key }),
+    h('span', { class: 'muted', text: app.readOnly ? '只读查看' : '课程实色 / 安排虚线 / 课间紧凑带' }),
+    h('span', { class: 'grow' })
+  );
+  if (!app.readOnly) {
+    top.append(h('button', { class: 'primary', type: 'button', text: '＋ 课程', onclick: () => openCourseModal('course') }));
+    top.append(h('button', { type: 'button', text: '＋ 日常安排', onclick: () => openCourseModal('plan') }));
+  }
+  const scroll = h('div', { class: 'tt-scroll' });
+  const inner = h('div', { class: 'tt-inner' });
+  const grid = h('div', { class: 'tt-table' });
+  grid.append(h('div', { class: 'tt-corner', text: '时间' }));
+  for (let d = 1; d <= 7; d++) grid.append(h('div', { class: 'tt-dayhead', text: dayName(d) }));
+  const axis = h('div', { class: 'tt-axis' });
+  for (let m = 480; m <= 1320; m += 60) {
+    const label = h('span', { text: minToTime(m) });
+    label.style.top = (m - 480) + 'px';
+    axis.append(label);
+  }
+  grid.append(axis);
+
+  const selectedKey = app.ttSelected;
+  const occurrences = [];
+  for (const c of table.courses) occurrences.push({ kind: 'course', id: c.id, day: c.day, start: timeToMin(c.start), end: timeToMin(c.end), title: c.title, raw: c });
+  for (const p of table.plans) for (const d of p.days) occurrences.push({ kind: 'plan', id: p.id, day: d, start: timeToMin(p.start), end: timeToMin(p.end), title: p.title, break: !!p.break, raw: p });
+  for (let d = 1; d <= 7; d++) {
+    const col = h('div', { class: 'tt-col' });
+    const dayItems = occurrences.filter(o => o.day === d && o.start !== null && o.end !== null).sort((a, b) => a.start - b.start || b.end - a.end);
+    const laneEnds = [];
+    const placed = [];
+    for (const item of dayItems) {
+      let lane = laneEnds.findIndex(end => end <= item.start);
+      if (lane < 0) { lane = laneEnds.length; laneEnds.push(item.end); }
+      else laneEnds[lane] = item.end;
+      placed.push({ ...item, lane });
+    }
+    const lanes = Math.max(1, laneEnds.length);
+    for (const item of placed) {
+      const key = `${item.kind}:${item.id}:${item.day}`;
+      const card = h('div', {
+        class: 'tt-card ' + item.kind + (item.break ? ' break' : '') + (selectedKey === key ? ' selected' : '') + (app.ttHighlight && item.title === app.ttHighlight ? ' highlight' : ''),
+        title: `${item.title} ${minToTime(item.start)}–${minToTime(item.end)}`,
+      });
+      card.dataset.key = key;
+      card.style.left = (item.lane * (100 / lanes)) + '%';
+      card.style.width = `calc(${100 / lanes}% - 3px)`;
+      card.style.top = (item.start - 480) + 'px';
+      card.style.height = Math.max(20, item.end - item.start) + 'px';
+      card.append(h('div', { class: 't-title', text: item.title }));
+      if (!item.break) card.append(h('div', { class: 't-time', text: `${minToTime(item.start)}–${minToTime(item.end)}` }));
+      card.addEventListener('click', e => onTtCardClick(e, item));
+      if (selectedKey === key && !app.readOnly) {
+        card.append(h('button', { class: 't-del', type: 'button', text: '✕', title: '删除这一格', onclick: e => { e.stopPropagation(); deleteOccurrence(item); } }));
+      }
+      col.append(card);
+    }
+    grid.append(col);
+  }
+  inner.append(grid);
+  const nowLine = h('div', { class: 'tt-nowline', id: 'ttNowLine' });
+  const petCanvas = h('canvas', { id: 'petCanvas', class: 'tt-pet', width: 32, height: 32 });
+  nowLine.append(petCanvas);
+  nowLine.append(h('span', { class: 'now-label', text: '现在' }));
+  inner.append(nowLine);
+  scroll.append(inner);
+  scroll.scrollTop = scrollTop;
+
+  const side = h('div', { class: 'tt-side' });
+  side.append(buildTtStats(meta));
+  side.append(buildTtScheduleList(table));
+  side.append(buildTtTasks());
+
+  const shell = h('div', { class: 'tt-shell' }, h('div', { class: 'panel tt-panel' }, top, scroll), side);
+  view.append(shell);
+  updateNowLine();
+  startTtTimers();
+}
+
+function buildTtStats(meta) {
+  const box = h('div', { class: 'panel tt-box' });
+  box.append(h('h3', {}, h('span', { text: '科技点换算' }), h('span', { class: 'pill', text: app.readOnly ? '只读' : '本周' })));
+  const rateRow = h('div', { class: 'rate-row' });
+  const slider = h('input', { type: 'range', min: 0, max: 100, step: 1, value: String(meta.rate || 0) });
+  slider.disabled = app.readOnly;
+  const rateLabel = h('span', { class: 'mono', text: `${meta.rate || 0}%` });
+  slider.addEventListener('input', () => {
+    rateLabel.textContent = slider.value + '%';
+    app.tree.timer.rate = Number(slider.value);
+    clearTimeout(app.rateTimer);
+    app.rateTimer = setTimeout(async () => {
+      const ok = await persistTree({ render: false });
+      if (ok) renderTimetable();
+    }, 350);
+  });
+  rateRow.append(slider, rateLabel);
+  box.append(rateRow);
+  box.append(h('div', { class: 'formula', text:
+    `本周总空闲 ${Math.round(meta.totalFreeMinutes / 60 * 10) / 10}h\n` +
+    `剩余空闲 ${Math.round(meta.remainingMinutes / 60 * 10) / 10}h × ${meta.rate}% = ${fmtNum((meta.remainingMinutes / 60) * meta.rate / 100)}\n` +
+    `任务奖励 +${meta.bonus} · 已用 −${meta.used}\n` +
+    `可用 = ${fmtNum(meta.available)} 科技点` }));
+  return box;
+}
+
+function buildTtScheduleList(table) {
+  const box = h('div', { class: 'panel tt-box' });
+  box.append(h('h3', {}, h('span', { text: '本周安排' }), h('span', { class: 'muted', text: '点击高亮 · 可整条删除' })));
+  const courses = new Map();
+  for (const c of table.courses) {
+    if (!courses.has(c.title)) courses.set(c.title, { kind: 'course', title: c.title, count: 0 });
+    courses.get(c.title).count++;
+  }
+  const plans = new Map();
+  for (const p of table.plans) {
+    if (!plans.has(p.title)) plans.set(p.title, { kind: 'plan', title: p.title, count: 0 });
+    plans.get(p.title).count += p.days.length;
+  }
+  const list = h('div', { class: 'tt-list' });
+  for (const item of [...courses.values(), ...plans.values()]) {
+    const row = h('div', { class: 'tt-list-row' + (app.ttHighlight === item.title ? ' hl' : '') });
+    row.append(h('span', { text: item.kind === 'course' ? '■' : '▢' }));
+    row.append(h('span', { class: 'nm', text: item.title }));
+    row.append(h('span', { class: 'cnt', text: `${item.count}${item.kind === 'course' ? ' 节' : ' 天'}` }));
+    row.title = '点击高亮相同名称的卡片';
+    row.addEventListener('click', () => {
+      app.ttHighlight = app.ttHighlight === item.title ? '' : item.title;
+      renderTimetable();
+    });
+    if (!app.readOnly) {
+      row.append(h('button', { class: 'mini danger', type: 'button', text: '删除', title: '删除整条', onclick: async e => {
+        e.stopPropagation();
+        if (!(await confirmDialog(`删除所有「${item.title}」${item.kind === 'course' ? '课程' : '安排'}？`, '删除'))) return;
+        if (item.kind === 'course') table.courses = table.courses.filter(c => c.title !== item.title);
+        else table.plans = table.plans.filter(p => p.title !== item.title);
+        await persistTree({ render: false });
+        renderTimetable();
+      } }));
+    }
+    list.append(row);
+  }
+  if (!list.children.length) list.append(h('div', { class: 'empty', text: '本周还没有安排。' }));
+  box.append(list);
+  box.append(h('div', { class: 'row' }, h('span', { class: 'muted', text: '课间带不计入空闲。' })));
+  const petRow = h('div', { class: 'row' });
+  const petSelect = h('select', { class: 'pet-select' });
+  for (const [id, label] of [['cat', '猫'], ['dog', '狗'], ['rabbit', '兔'], ['penguin', '企鹅']]) {
+    petSelect.append(h('option', { value: id, text: label, selected: app.pet === id }));
+  }
+  petSelect.addEventListener('change', () => {
+    app.pet = petSelect.value;
+    localStorage.setItem('pet', app.pet);
+    petFrames.delete(app.pet);
+    startPetAnimation();
+  });
+  petRow.append(h('span', { class: 'muted', text: '走动角色：' }), petSelect);
+  box.append(petRow);
+  return box;
+}
+
+function buildTtTasks() {
+  const box = h('div', { class: 'panel tt-box' });
+  const meta = { bonus: app.meta ? app.meta.bonus : 0 };
+  box.append(h('h3', {}, h('span', { text: '本周任务' }), h('span', { class: 'pill warn', text: `奖励 +${meta.bonus}` })));
+  const list = h('div', {});
+  for (const task of app.tree.tasks) {
+    const row = h('div', { class: 'task-row' });
+    const cb = h('input', { type: 'checkbox', checked: task.done });
+    cb.disabled = app.readOnly;
+    cb.addEventListener('change', async () => {
+      task.done = cb.checked;
+      task.doneAt = cb.checked ? new Date().toISOString() : null;
+      await persistTree({ render: false });
+      renderTimetable();
+    });
+    row.append(cb);
+    row.append(h('span', { class: 'tm', text: task.name }));
+    row.append(h('span', { class: 'tp', text: `+${task.points}` }));
+    if (!app.readOnly) row.append(h('button', { class: 'mini ghost', type: 'button', text: '×', onclick: async () => {
+      app.tree.tasks = app.tree.tasks.filter(t => t.id !== task.id);
+      await persistTree({ render: false });
+      renderTimetable();
+    } }));
+    list.append(row);
+  }
+  if (!app.tree.tasks.length) list.append(h('div', { class: 'empty', text: '完成任务可获得科技点奖励。' }));
+  box.append(list);
+  if (!app.readOnly) {
+    const name = h('input', { placeholder: '任务名称', maxlength: 40 });
+    const pts = h('input', { type: 'number', min: 0, max: 1000, step: 1, value: 1 });
+    pts.style.width = '74px';
+    const add = h('button', { class: 'mini', type: 'button', text: '添加', onclick: async () => {
+      const value = name.value.trim();
+      if (!value) { toast('任务名称不能为空', 'error'); return; }
+      app.tree.tasks.push({ id: uuid(), name: value, points: Math.round(Number(pts.value) || 0), done: false, doneAt: null });
+      await persistTree({ render: false });
+      renderTimetable();
+    } });
+    box.append(h('div', { class: 'row' }, name, pts, add));
+  }
+  return box;
+}
+
+function onTtCardClick(event, item) {
+  const key = `${item.kind}:${item.id}:${item.day}`;
+  if (event.ctrlKey || event.metaKey) {
+    if (!app.ttCtrl || app.ttCtrl.day !== item.day || app.ttCtrl.key === key) {
+      app.ttCtrl = { ...item, key };
+      app.ttSelected = key;
+      renderTimetable();
+      toast('再 Ctrl+点击同一天的另一张卡，可插入课间', 'ok');
+      return;
+    }
+    const first = app.ttCtrl.start <= item.start ? app.ttCtrl : item;
+    const second = app.ttCtrl.start <= item.start ? item : app.ttCtrl;
+    const gapStart = first.end;
+    const gapEnd = second.start;
+    app.ttCtrl = null;
+    if (gapEnd <= gapStart) { toast('两张卡之间没有空隙，无法插入课间', 'error'); return; }
+    if (app.readOnly) return;
+    const table = ttTable();
+    table.plans.push({ id: uuid(), days: [item.day], start: minToTime(gapStart), end: minToTime(gapEnd), title: '课间', break: true });
+    persistTree({ render: false }).then(ok => { if (ok) { toast('已插入课间（不算空闲）', 'ok'); renderTimetable(); } });
+    return;
+  }
+  app.ttCtrl = null;
+  app.ttSelected = key;
+  renderTimetable();
+}
+
+async function deleteOccurrence(item) {
+  if (app.readOnly) return;
+  const table = ttTable();
+  if (item.kind === 'course') {
+    table.courses = table.courses.filter(c => c.id !== item.id);
+  } else {
+    const plan = table.plans.find(p => p.id === item.id);
+    if (!plan) return;
+    plan.days = plan.days.filter(d => d !== item.day);
+    if (!plan.days.length) table.plans = table.plans.filter(p => p.id !== item.id);
+  }
+  app.ttSelected = null;
+  const ok = await persistTree({ render: false });
+  if (ok) { toast('已删除这一格', 'ok'); renderTimetable(); }
+}
+
+function openCourseModal(kind) {
+  if (app.readOnly) return;
+  const title = h('input', { maxlength: 40, placeholder: kind === 'course' ? '例如：高等数学' : '例如：每日晨读' });
+  const timeOptions = [];
+  for (let m = 480; m <= 1320; m += 30) timeOptions.push(minToTime(m));
+  const start = h('select', {});
+  const end = h('select', {});
+  for (const t of timeOptions) {
+    start.append(h('option', { value: t, text: t, selected: t === '08:00' }));
+    end.append(h('option', { value: t, text: t, selected: t === '10:00' }));
+  }
+  let daySelect = null;
+  let daysBox = null;
+  const dayChecks = [];
+  if (kind === 'course') {
+    daySelect = h('select', {});
+    for (let d = 1; d <= 7; d++) daySelect.append(h('option', { value: String(d), text: dayName(d) }));
+  } else {
+    daysBox = h('div', { class: 'chips' });
+    for (let d = 1; d <= 7; d++) {
+      const cb = h('input', { type: 'checkbox', checked: d <= 5 });
+      cb.style.width = 'auto';
+      const label = h('label', { class: 'row' }, cb, h('span', { text: dayName(d) }));
+      label.style.margin = '0';
+      dayChecks.push({ d, cb });
+      daysBox.append(label);
+    }
+  }
+  const content = h('div', {},
+    h('label', { text: '名称' }), title,
+    kind === 'course' ? h('div', {}, h('label', { text: '星期' }), daySelect) : h('div', {}, h('label', { text: '重复日期' }), daysBox),
+    h('div', { class: 'row' }, h('div', { class: 'grow' }, h('label', { text: '开始' }), start), h('div', { class: 'grow' }, h('label', { text: '结束' }), end)),
+    h('div', { class: 'hint-line', text: '时段限制在 08:00–22:00。重叠的安排会自动分道并排。' })
+  );
+  const modal = openModal(kind === 'course' ? '新增课程' : '新增日常安排', content, [
+    { label: '取消', onClick: () => modal.close() },
+    { label: '保存', primary: true, onClick: async () => {
+      const name = title.value.trim();
+      if (!name) { toast('名称不能为空', 'error'); return; }
+      const s = timeToMin(start.value), e = timeToMin(end.value);
+      if (s === null || e === null || s < 480 || e > 1320 || s >= e) { toast('时间范围需在 08:00–22:00 且开始早于结束', 'error'); return; }
+      const table = ttTable();
+      if (kind === 'course') {
+        table.courses.push({ id: uuid(), day: Number(daySelect.value), start: start.value, end: end.value, title: name });
+      } else {
+        const days = dayChecks.filter(x => x.cb.checked).map(x => x.d);
+        if (!days.length) { toast('至少选择一天', 'error'); return; }
+        table.plans.push({ id: uuid(), days, start: start.value, end: end.value, title: name });
+      }
+      modal.close();
+      const ok = await persistTree({ render: false });
+      if (ok) { toast('已保存安排', 'ok'); renderTimetable(); }
+    } },
+  ]);
+}
+
+function updateNowLine() {
+  const line = $('#ttNowLine');
+  if (!line) return;
+  const now = new Date();
+  const minutes = now.getHours() * 60 + now.getMinutes();
+  if (minutes < 480 || minutes > 1320) { line.hidden = true; return; }
+  line.hidden = false;
+  line.style.top = (36 + (minutes - 480)) + 'px';
+}
+
+const petFrames = new Map();
+function getPetFrames(type) {
+  if (petFrames.has(type)) return petFrames.get(type);
+  const colors = { cat: '#f3b26a', dog: '#d9a06a', rabbit: '#e9e2d8', penguin: '#88dcec' };
+  const frames = [];
+  for (let f = 0; f < 8; f++) {
+    const canvas = document.createElement('canvas');
+    canvas.width = 32; canvas.height = 32;
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+    const step = [0, 1, 2, 3, 0, 1, 2, 3][f];
+    const bob = f < 4 ? 0 : 1;
+    const color = colors[type] || colors.cat;
+    ctx.fillStyle = color;
+    ctx.fillRect(8, 13 + bob, 16, 12);
+    ctx.fillRect(10, 8 + bob, 12, 9);
+    if (type === 'cat') { ctx.fillRect(10, 5 + bob, 4, 4); ctx.fillRect(18, 5 + bob, 4, 4); }
+    if (type === 'dog') { ctx.fillRect(9, 8 + bob, 4, 6); ctx.fillRect(19, 8 + bob, 4, 6); }
+    if (type === 'rabbit') { ctx.fillRect(11, 1 + bob, 3, 8); ctx.fillRect(18, 1 + bob, 3, 8); }
+    if (type === 'penguin') { ctx.fillStyle = '#12303d'; ctx.fillRect(8, 12 + bob, 3, 10); ctx.fillRect(21, 12 + bob, 3, 10); ctx.fillStyle = color; }
+    ctx.fillStyle = '#0b0f14';
+    ctx.fillRect(12, 11 + bob, 2, 2);
+    ctx.fillRect(18, 11 + bob, 2, 2);
+    ctx.fillStyle = color;
+    ctx.fillRect(10, 24 + step, 3, 4);
+    ctx.fillRect(19, 24 - step, 3, 4);
+    ctx.fillRect(24, 15 - step + bob, 4, 3);
+    frames.push(canvas);
+  }
+  petFrames.set(type, frames);
+  return frames;
+}
+
+let petFrameIndex = 0;
+function startPetAnimation() {
+  clearInterval(app.ttPetTimer);
+  app.ttPetTimer = setInterval(() => {
+    if (app.view !== 'timetable') return;
+    const canvas = $('#petCanvas');
+    const line = $('#ttNowLine');
+    if (!canvas || !line || line.hidden) return;
+    const ctx = canvas.getContext('2d');
+    ctx.clearRect(0, 0, 32, 32);
+    const frames = getPetFrames(app.pet);
+    ctx.drawImage(frames[petFrameIndex % 8], 0, 0);
+    petFrameIndex++;
+  }, 130);
+}
+
+function startTtTimers() {
+  stopTtTimers();
+  updateNowLine();
+  app.ttNowTimer = setInterval(updateNowLine, 1000);
+  startPetAnimation();
+}
+function stopTtTimers() {
+  clearInterval(app.ttNowTimer);
+  clearInterval(app.ttPetTimer);
+  app.ttNowTimer = null;
+  app.ttPetTimer = null;
+}
+
+// ---------------------------------------------------------------- 笔记
+async function loadNotes() {
+  if (app.notes.mode === 'server') {
+    try {
+      const data = await api('/api/notes');
+      app.notes.list = data.notes || [];
+    } catch (e) { handleApiError(e); app.notes.list = []; }
+  } else {
+    await loadLocalNotes();
+  }
+  renderNotes();
+}
+
+async function loadLocalNotes() {
+  app.notes.localList = [];
+  if (!window.showDirectoryPicker) return;
+  try {
+    let handle = await idbGet('notesDir');
+    if (!handle) return;
+    if (handle.queryPermission) {
+      const perm = await handle.queryPermission({ mode: 'readwrite' });
+      if (perm !== 'granted') {
+        const req = await handle.requestPermission({ mode: 'readwrite' });
+        if (req !== 'granted') return;
+      }
+    }
+    app.notes.dir = handle;
+    for await (const [name, entry] of handle.entries()) {
+      if (name.toLowerCase().endsWith('.md')) app.notes.localList.push({ name, handle: entry });
+    }
+    app.notes.localList.sort((a, b) => a.name.localeCompare(b.name));
+  } catch (e) {
+    app.notes.dir = null;
+  }
+}
+
+function renderNotes() {
+  const view = $('#notesView');
+  if (!view) return;
+  view.replaceChildren();
+  const head = h('div', { class: 'view-head' },
+    h('h1', { text: '笔记' }),
+    h('span', { class: 'pill', text: app.notes.mode === 'server' ? '服务器模式' : '本地目录模式' }),
+    h('span', { class: 'muted', text: app.notes.mode === 'server' ? '直接保存在服务端，任何设备可用。' : '文件保存在你选择的本地目录，服务端只存文件名与大小。' }),
+    h('span', { class: 'grow' })
+  );
+  head.append(h('button', { class: 'primary', type: 'button', text: '＋ 新建笔记', onclick: newNote }));
+  view.append(head);
+
+  const shell = h('div', { class: 'notes-layout' });
+  const side = h('div', { class: 'panel notes-side' });
+  const modes = h('div', { class: 'mode-tabs' },
+    h('button', { class: 'chip' + (app.notes.mode === 'server' ? ' on' : ''), type: 'button', text: '服务器', onclick: () => { app.notes.mode = 'server'; app.notes.current = null; app.notes.content = ''; loadNotes(); } }),
+    h('button', { class: 'chip' + (app.notes.mode === 'local' ? ' on' : ''), type: 'button', text: '本地目录', onclick: () => { app.notes.mode = 'local'; app.notes.current = null; app.notes.content = ''; loadNotes(); } })
+  );
+  side.append(modes);
+  if (app.notes.mode === 'local') {
+    const dirRow = h('div', { class: 'row' }, h('button', { class: 'mini', type: 'button', text: '选择目录', onclick: pickNotesDir }));
+    side.append(dirRow);
+    if (!window.showDirectoryPicker) side.append(h('div', { class: 'hint-line', text: '当前浏览器不支持 File System Access API，请使用 Chromium 浏览器。' }));
+    if (!app.notes.dir) side.append(h('div', { class: 'hint-line', text: '尚未选择本地目录。' }));
+    const list = h('div', {});
+    for (const item of app.notes.localList) {
+      const row = h('div', { class: 'note-item' + (app.notes.current === item.name ? ' active' : '') });
+      row.append(h('span', { class: 'nm', text: item.name }));
+      row.addEventListener('click', () => openLocalNote(item));
+      list.append(row);
+    }
+    if (!app.notes.localList.length && app.notes.dir) list.append(h('div', { class: 'empty', text: '目录内没有 .md 文件。' }));
+    side.append(list);
+  } else {
+    const list = h('div', {});
+    for (const item of app.notes.list) {
+      const row = h('div', { class: 'note-item' + (app.notes.current === item.name ? ' active' : '') });
+      row.append(h('span', { class: 'nm', text: item.name }));
+      row.append(h('span', { class: 'cnt muted', text: `${Math.max(1, Math.round(item.size / 1024))}KB` , }));
+      row.append(h('button', { class: 'mini danger', type: 'button', text: '×', onclick: async e => {
+        e.stopPropagation();
+        if (!(await confirmDialog(`删除笔记「${item.name}」？`, '删除'))) return;
+        try {
+          await api(`/api/notes/${encodeURIComponent(item.name)}`, { method: 'DELETE' });
+          if (app.notes.current === item.name) { app.notes.current = null; app.notes.content = ''; }
+          toast('笔记已删除', 'ok');
+          loadNotes();
+        } catch (err) { handleApiError(err); }
+      } }));
+      row.addEventListener('click', () => openServerNote(item.name));
+      list.append(row);
+    }
+    if (!app.notes.list.length) list.append(h('div', { class: 'empty', text: '还没有笔记，创建第一篇吧。' }));
+    side.append(list);
+  }
+
+  const editor = h('div', { class: 'panel notes-editor' });
+  const upload = h('input', { type: 'file', accept: '.md,.markdown,text/markdown,text/plain' });
+  upload.style.display = 'none';
+  upload.addEventListener('change', async () => {
+    const file = upload.files && upload.files[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) { toast('笔记文件不能超过 2MB', 'error'); return; }
+    const text = await file.text();
+    if (!app.notes.current) app.notes.current = file.name.toLowerCase().endsWith('.md') ? file.name : file.name + '.md';
+    app.notes.content = text;
+    app.notes.preview = false;
+    renderNotes();
+    toast('文件已载入，点击保存写入', 'ok');
+  });
+  const editorHead = h('div', { class: 'spread' },
+    h('h3', { text: app.notes.current || '未选择笔记' }),
+    h('div', { class: 'row' },
+      h('button', { class: 'mini', type: 'button', text: '上传 .md', onclick: () => upload.click() }),
+      h('button', { class: 'mini', type: 'button', text: app.notes.preview ? '编辑' : '预览', onclick: () => { app.notes.preview = !app.notes.preview; renderNotes(); } }),
+      h('button', { class: 'primary mini', type: 'button', text: '保存', onclick: saveCurrentNote })
+    )
+  );
+  editor.append(editorHead, upload);
+  if (app.notes.preview) {
+    const preview = h('div', { class: 'md-preview' });
+    preview.innerHTML = mdToHtml(app.notes.content || '');
+    editor.append(preview);
+  } else {
+    const ta = h('textarea', { spellcheck: 'false', placeholder: '支持 Markdown。左侧选择或新建笔记后开始书写…' });
+    ta.value = app.notes.content || '';
+    ta.addEventListener('input', () => { app.notes.content = ta.value; });
+    editor.append(ta);
+  }
+  shell.append(side, editor);
+  view.append(shell);
+}
+
+async function openServerNote(name) {
+  try {
+    const text = await api(`/api/notes/${encodeURIComponent(name)}`);
+    app.notes.current = name;
+    app.notes.content = typeof text === 'string' ? text : '';
+    app.notes.preview = false;
+    renderNotes();
+  } catch (e) { handleApiError(e); }
+}
+
+async function openLocalNote(item) {
+  try {
+    const file = await item.handle.getFile();
+    app.notes.current = item.name;
+    app.notes.content = await file.text();
+    app.notes.preview = false;
+    renderNotes();
+  } catch (e) { toast('读取本地文件失败', 'error'); }
+}
+
+async function pickNotesDir() {
+  if (!window.showDirectoryPicker) { toast('当前浏览器不支持本地目录模式', 'error'); return; }
+  try {
+    const handle = await window.showDirectoryPicker({ mode: 'readwrite' });
+    await idbSet('notesDir', handle);
+    app.notes.dir = handle;
+    await loadLocalNotes();
+    renderNotes();
+    toast('已连接本地目录', 'ok');
+  } catch (e) {
+    if (e && e.name !== 'AbortError') toast('选择目录失败', 'error');
+  }
+}
+
+function newNote() {
+  if (app.notes.mode === 'local') {
+    const name = h('input', { placeholder: '例如：周记.md', maxlength: 80 });
+    const modal = openModal('新建本地笔记', h('div', {}, h('label', { text: '文件名（.md）' }), name), [
+      { label: '取消', onClick: () => modal.close() },
+      { label: '创建', primary: true, onClick: async () => {
+        let value = name.value.trim();
+        if (!value) { toast('文件名不能为空', 'error'); return; }
+        if (!value.toLowerCase().endsWith('.md')) value += '.md';
+        try {
+          const handle = await app.notes.dir.getFileHandle(value, { create: true });
+          const writable = await handle.createWritable();
+          await writable.write('');
+          await writable.close();
+          modal.close();
+          app.notes.current = value;
+          app.notes.content = '';
+          await loadLocalNotes();
+          renderNotes();
+        } catch (e) { toast('创建失败', 'error'); }
+      } },
+    ]);
+    return;
+  }
+  const name = h('input', { placeholder: '例如：学习计划.md', maxlength: 80 });
+  const modal = openModal('新建笔记', h('div', {}, h('label', { text: '文件名' }), name), [
+    { label: '取消', onClick: () => modal.close() },
+    { label: '创建', primary: true, onClick: async () => {
+      let value = name.value.trim();
+      if (!value) { toast('文件名不能为空', 'error'); return; }
+      if (!value.toLowerCase().endsWith('.md')) value += '.md';
+      try {
+        await api(`/api/notes?name=${encodeURIComponent(value)}`, { method: 'POST', body: '', raw: true, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+        modal.close();
+        app.notes.current = value;
+        app.notes.content = '';
+        await loadNotes();
+      } catch (e) { handleApiError(e); }
+    } },
+  ]);
+}
+
+async function saveCurrentNote() {
+  if (!app.notes.current) { toast('请先选择或新建笔记', 'error'); return; }
+  try {
+    if (app.notes.mode === 'local') {
+      if (!app.notes.dir) { toast('请先选择本地目录', 'error'); return; }
+      const handle = await app.notes.dir.getFileHandle(app.notes.current, { create: true });
+      const writable = await handle.createWritable();
+      await writable.write(app.notes.content);
+      await writable.close();
+      await syncLocalMeta(app.notes.current, new Blob([app.notes.content]).size);
+      toast('已保存到本地目录', 'ok');
+      await loadLocalNotes();
+      renderNotes();
+    } else {
+      await api(`/api/notes?name=${encodeURIComponent(app.notes.current)}`, { method: 'POST', body: app.notes.content, raw: true, headers: { 'Content-Type': 'text/plain; charset=utf-8' } });
+      toast('笔记已保存', 'ok');
+      await loadNotes();
+    }
+  } catch (e) { handleApiError(e); }
+}
+
+async function syncLocalMeta(name, size) {
+  try {
+    const files = app.tree.files || (app.tree.files = []);
+    const existing = files.find(f => f.local && f.name === name);
+    if (existing) existing.size = size;
+    else {
+      if (files.length >= 200) { toast('文件数量已达上限', 'error'); return; }
+      files.push({ id: uuid(), nodeId: null, name, mime: 'text/markdown', size, storedAs: '', local: true, createdAt: new Date().toISOString() });
+    }
+    const data = await api('/api/tree', { method: 'PUT', body: JSON.stringify(app.tree) });
+    app.tree = data.tree;
+    app.meta = data.meta;
+    updateHeader();
+  } catch (e) { /* 本地文件已保存，元数据同步失败不阻塞 */ }
+}
+
+function mdToHtml(source) {
+  const escape = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+  const inline = raw => {
+    let s = escape(raw);
+    s = s.replace(/`([^`]+)`/g, '<code>$1</code>');
+    s = s.replace(/\*\*([^*]+)\*\*/g, '<strong>$1</strong>');
+    s = s.replace(/\*([^*]+)\*/g, '<em>$1</em>');
+    s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^\s)]+)\)/g, '<a href="$2" target="_blank" rel="noreferrer noopener">$1</a>');
+    return s;
+  };
+  const lines = String(source || '').split(/\r?\n/);
+  const out = [];
+  let inCode = false;
+  let code = [];
+  let list = false;
+  const closeList = () => { if (list) { out.push('</ul>'); list = false; } };
+  for (const line of lines) {
+    if (line.trim().startsWith('```')) {
+      if (inCode) { out.push(`<pre><code>${escape(code.join('\n'))}</code></pre>`); code = []; inCode = false; }
+      else { closeList(); inCode = true; }
+      continue;
+    }
+    if (inCode) { code.push(line); continue; }
+    const heading = /^(#{1,3})\s+(.*)$/.exec(line);
+    if (heading) { closeList(); out.push(`<h${heading[1].length}>${inline(heading[2])}</h${heading[1].length}>`); continue; }
+    if (/^\s*[-*]\s+/.test(line)) {
+      if (!list) { out.push('<ul>'); list = true; }
+      out.push(`<li>${inline(line.replace(/^\s*[-*]\s+/, ''))}</li>`);
+      continue;
+    }
+    closeList();
+    if (/^>\s?/.test(line)) { out.push(`<blockquote>${inline(line.replace(/^>\s?/, ''))}</blockquote>`); continue; }
+    if (/^\s*([-*_])\1{2,}\s*$/.test(line)) { out.push('<div class="hr"></div>'); continue; }
+    if (!line.trim()) continue;
+    out.push(`<p>${inline(line)}</p>`);
+  }
+  if (inCode) out.push(`<pre><code>${escape(code.join('\n'))}</code></pre>`);
+  closeList();
+  return out.join('');
+}
+
+// IndexedDB
+function idbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open('growth-tree', 1);
+    req.onupgradeneeded = () => { req.result.createObjectStore('kv'); };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbGet(key) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('kv', 'readonly');
+    const req = tx.objectStore('kv').get(key);
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+async function idbSet(key, value) {
+  const db = await idbOpen();
+  return new Promise((resolve, reject) => {
+    const tx = db.transaction('kv', 'readwrite');
+    tx.objectStore('kv').put(value, key);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+// ---------------------------------------------------------------- 蓝图
+function clientScore({ title, note, nodes, images, files }) {
+  const t = String(title || '').trim();
+  const n = String(note || '').trim();
+  const ns = nodes || [];
+  let score = t.length >= 2 ? 10 : 0;
+  score += Math.min(30, Math.floor(n.length / 3));
+  score += Math.min(15, ns.length * 3);
+  const noted = ns.filter(x => String(x.note || '').trim()).length;
+  score += ns.length ? Math.round(30 * noted / ns.length) : 0;
+  score += (images || []).length + (files || []).length > 0 ? 15 : 0;
+  score += ns.length >= 2 && ns.length <= 30 ? 5 : 0;
+  return Math.min(100, score);
+}
+
+async function loadBlueprints() {
+  const params = new URLSearchParams();
+  if (app.bps.category) params.set('category', app.bps.category);
+  if (app.bps.q) params.set('q', app.bps.q);
+  try {
+    const data = await api('/api/blueprints?' + params.toString());
+    app.bps.list = data.blueprints || [];
+    renderBlueprints();
+  } catch (e) { handleApiError(e); }
+}
+
+function renderBlueprints() {
+  const view = $('#blueprintsView');
+  if (!view) return;
+  view.replaceChildren();
+  const head = h('div', { class: 'view-head' },
+    h('h1', { text: '蓝图市场' }),
+    h('span', { class: 'muted', text: '分享你的能力树结构，或导入他人的蓝图。' }),
+    h('span', { class: 'grow' })
+  );
+  if (!app.readOnly) head.append(h('button', { class: 'primary', type: 'button', text: '发布当前树', onclick: openPublishModal }));
+  view.append(head);
+
+  const catSelect = h('select', {});
+  catSelect.style.maxWidth = '170px';
+  catSelect.append(h('option', { value: '', text: '全部分类' }));
+  for (const c of (app.tree ? app.tree.categories : [])) catSelect.append(h('option', { value: c.id, text: c.name, selected: app.bps.category === c.id }));
+  catSelect.addEventListener('change', () => { app.bps.category = catSelect.value; loadBlueprints(); });
+  const search = h('input', { placeholder: '搜索标题 / 说明 / 作者', value: app.bps.q });
+  search.style.maxWidth = '260px';
+  search.addEventListener('keydown', e => { if (e.key === 'Enter') { app.bps.q = search.value.trim(); loadBlueprints(); } });
+  view.append(h('div', { class: 'row' }, catSelect, search, h('button', { type: 'button', text: '搜索', onclick: () => { app.bps.q = search.value.trim(); loadBlueprints(); } }), h('button', { class: 'ghost', type: 'button', text: '刷新', onclick: loadBlueprints })));
+
+  if (!app.bps.list.length) {
+    view.append(h('div', { class: 'empty-state', text: '暂时没有可查看的蓝图。发布你的成长树，让它成为别人的起点。' }));
+    return;
+  }
+  const grid = h('div', { class: 'bp-grid' });
+  for (const bp of app.bps.list) {
+    const card = h('div', { class: 'bp-card' });
+    card.append(h('h3', { text: bp.title }));
+    card.append(h('div', { class: 'bp-meta' },
+      h('span', { class: 'pill mutedp', text: bp.categoryName || '未分类' }),
+      h('span', { class: 'pill', text: bp.visibility === 'public' ? '公开' : bp.visibility === 'friends' ? '好友可见' : '私有' }),
+      h('span', { text: `by ${bp.ownerName}` })
+    ));
+    if (bp.note) card.append(h('div', { class: 'bp-note', text: bp.note }));
+    const score = h('div', { class: 'score' }, h('span', { text: `评分 ${bp.score}/100` }), h('span', { class: 'score-bar' }, h('span', { class: 'score-fill' })));
+    score.querySelector('.score-fill').style.width = bp.score + '%';
+    card.append(score);
+    card.append(h('div', { class: 'bp-meta' }, h('span', { text: `${bp.nodeCount} 个节点` }), h('span', { text: `${bp.imageCount} 张图` }), h('span', { text: fmtDate(bp.updatedAt) })));
+    const actions = h('div', { class: 'bp-actions' });
+    actions.append(h('button', { class: 'mini', type: 'button', text: '详情', onclick: () => showBlueprint(bp.id) }));
+    actions.append(h('button', { class: 'mini primary', type: 'button', text: '导入', onclick: () => importBlueprint(bp) }));
+    if (bp.mine) {
+      actions.append(h('button', { class: 'mini', type: 'button', text: '刷新', onclick: () => refreshBlueprint(bp.id) }));
+      actions.append(h('button', { class: 'mini danger', type: 'button', text: '删除', onclick: () => deleteBlueprint(bp) }));
+    }
+    card.append(actions);
+    grid.append(card);
+  }
+  view.append(grid);
+}
+
+function openPublishModal() {
+  if (!app.tree) return;
+  const title = h('input', { maxlength: 60, placeholder: '例如：前端工程师成长路径' });
+  const note = h('textarea', { maxlength: 5000, placeholder: '介绍这套能力结构：适合谁、怎么学、有什么坑…' });
+  const vis = h('select', {},
+    h('option', { value: 'public', text: '公开：所有人可见' }),
+    h('option', { value: 'friends', text: '好友可见' }),
+    h('option', { value: 'private', text: '仅自己可见', selected: true })
+  );
+  const nodes = app.tree.abilities;
+  const images = nodes.flatMap(n => n.photos || []);
+  const preview = h('div', { class: 'formula' });
+  function refreshPreview() {
+    const s = clientScore({ title: title.value, note: note.value, nodes, images, files: [] });
+    preview.textContent = `预计评分 ${s}/100（标题10 + 说明30 + 节点15 + 节点笔记30 + 附件15 + 体量5）\n包含 ${nodes.length} 个节点、${images.length} 张图片。`;
+  }
+  title.addEventListener('input', refreshPreview);
+  note.addEventListener('input', refreshPreview);
+  refreshPreview();
+  const modal = openModal('发布蓝图', h('div', {},
+    h('label', { text: '标题' }), title,
+    h('label', { text: '说明' }), note,
+    h('label', { text: '可见性' }), vis,
+    h('div', { class: 'hint-line', text: '发布时会把当前树的全部节点（含学习记录与照片）打包。导入者会获得重置为未点亮的副本。' }),
+    preview
+  ), [
+    { label: '取消', onClick: () => modal.close() },
+    { label: '发布', primary: true, onClick: async () => {
+      if (title.value.trim().length < 2) { toast('标题至少 2 个字符', 'error'); return; }
+      try {
+        await api('/api/blueprints', { method: 'POST', body: JSON.stringify({ title: title.value.trim(), note: note.value, visibility: vis.value }) });
+        modal.close();
+        toast('蓝图已发布', 'ok');
+        loadBlueprints();
+      } catch (e) { handleApiError(e); }
+    } },
+  ]);
+}
+
+async function showBlueprint(id) {
+  try {
+    const data = await api(`/api/blueprints/${encodeURIComponent(id)}`);
+    const bp = data.blueprint;
+    const content = h('div', {});
+    content.append(h('div', { class: 'kv' },
+      h('span', { class: 'k', text: '作者' }), h('span', { class: 'v', text: bp.ownerName }),
+      h('span', { class: 'k', text: '评分' }), h('span', { class: 'v mono', text: `${bp.score}/100` }),
+      h('span', { class: 'k', text: '可见性' }), h('span', { class: 'v', text: bp.visibility }),
+      h('span', { class: 'k', text: '更新' }), h('span', { class: 'v', text: fmtDate(bp.updatedAt) })
+    ));
+    if (bp.note) content.append(h('div', { class: 'hr' }), h('div', { class: 'muted', text: bp.note }));
+    if (bp.images && bp.images.length) {
+      const strip = h('div', { class: 'image-strip' });
+      for (const img of bp.images) strip.append(h('img', { src: `/api/blueprints/${encodeURIComponent(bp.id)}/images/${encodeURIComponent(img.storedAs)}`, alt: img.name, loading: 'lazy' }));
+      content.append(h('label', { text: `图片（${bp.images.length}）` }), strip);
+    }
+    content.append(h('label', { text: `节点（${(bp.nodes || []).length}）` }));
+    const nodes = (bp.nodes || []).slice().sort((a, b) => (a.kind === b.kind ? 0 : a.kind === 'group' ? -1 : 1));
+    for (const n of nodes) {
+      const block = h('div', { class: 'node-note-block' }, h('div', { class: 't', text: `${n.kind === 'group' ? '组' : '知识点'} · ${n.name} · ${n.cost} 点` }));
+      if (n.note) block.append(h('div', { class: 'n', text: n.note }));
+      content.append(block);
+    }
+    openModal(bp.title, content, [
+      { label: '关闭', onClick: () => closeModal() },
+      { label: '导入到我的树', primary: true, onClick: async () => { closeModal(); await importBlueprint({ id: bp.id, title: bp.title }); } },
+    ]);
+  } catch (e) { handleApiError(e); }
+}
+
+async function importBlueprint(bp) {
+  if (app.readOnly) { toast('访客模式：请先返回自己的树再导入', 'error'); return; }
+  if (!(await confirmDialog(`把「${bp.title}」导入你的树？将只保留父链完整的子树，节点会重置为未点亮。`, '导入'))) return;
+  try {
+    const data = await api(`/api/blueprints/${encodeURIComponent(bp.id)}/import`, { method: 'POST', body: '{}' });
+    app.tree = data.tree;
+    app.meta = data.meta;
+    updateHeader();
+    renderTreeAll();
+    toast(`已导入 ${data.imported} 个节点`, 'ok');
+    switchView('tree');
+  } catch (e) { handleApiError(e); }
+}
+
+async function refreshBlueprint(id) {
+  try {
+    await api(`/api/blueprints/${encodeURIComponent(id)}/refresh`, { method: 'POST', body: '{}' });
+    toast('蓝图已按当前树刷新', 'ok');
+    loadBlueprints();
+  } catch (e) { handleApiError(e); }
+}
+
+async function deleteBlueprint(bp) {
+  if (!(await confirmDialog(`删除蓝图「${bp.title}」？`, '删除'))) return;
+  try {
+    await api(`/api/blueprints/${encodeURIComponent(bp.id)}`, { method: 'DELETE' });
+    toast('蓝图已删除', 'ok');
+    loadBlueprints();
+  } catch (e) { handleApiError(e); }
+}
+
+// ---------------------------------------------------------------- 好友
+async function loadFriends() {
+  try {
+    const data = await api('/api/friends');
+    app.friends.data = data;
+    renderFriends();
+  } catch (e) { handleApiError(e); }
+}
+
+function renderFriends() {
+  const view = $('#friendsView');
+  if (!view) return;
+  view.replaceChildren();
+  view.append(h('div', { class: 'view-head' },
+    h('h1', { text: '好友' }),
+    h('span', { class: 'muted', text: '好友之间可以互相只读查看成长树、课表与蓝图。' }),
+    h('span', { class: 'grow' }),
+    h('button', { class: 'ghost', type: 'button', text: '刷新', onclick: loadFriends })
+  ));
+  if (!app.friends.data) { view.append(h('div', { class: 'empty-state', text: '加载中…' })); return; }
+  const data = app.friends.data;
+  const two = h('div', { class: 'two-col' });
+
+  const left = h('div', { class: 'panel box' });
+  left.append(h('h3', { text: '查找用户' }));
+  const search = h('input', { placeholder: '输入至少 2 个字符', maxlength: 20 });
+  const searchBtn = h('button', { class: 'primary mini', type: 'button', text: '搜索', onclick: doUserSearch });
+  search.addEventListener('keydown', e => { if (e.key === 'Enter') doUserSearch(); });
+  left.append(h('div', { class: 'row' }, search, searchBtn));
+  const results = h('div', {});
+  results.id = 'userSearchResults';
+  for (const u of app.friends.search) {
+    const row = h('div', { class: 'user-row' });
+    row.append(h('span', { class: 'nm', text: u.name }));
+    if (u.isFriend) row.append(h('span', { class: 'pill ok', text: '已是好友' }));
+    else row.append(h('button', { class: 'mini', type: 'button', text: '加好友', onclick: () => sendFriendRequest(u) }));
+    results.append(row);
+  }
+  left.append(results);
+  left.append(h('div', { class: 'hr' }));
+  left.append(h('h3', { text: `好友（${data.friends.length}）` }));
+  if (!data.friends.length) left.append(h('div', { class: 'empty', text: '还没有好友，搜索用户名添加吧。' }));
+  for (const f of data.friends) {
+    const row = h('div', { class: 'user-row' });
+    row.append(h('span', { class: 'nm', text: f.name }));
+    row.append(h('button', { class: 'mini', type: 'button', text: '查看树', onclick: () => viewFriendTree(f.id, f.name) }));
+    row.append(h('button', { class: 'mini', type: 'button', text: '聊天', onclick: () => openChat(f) }));
+    row.append(h('button', { class: 'mini danger', type: 'button', text: '删除', onclick: async () => {
+      if (!(await confirmDialog(`删除好友「${f.name}」？`, '删除'))) return;
+      try { await api(`/api/friends/${encodeURIComponent(f.id)}`, { method: 'DELETE' }); toast('已删除好友', 'ok'); loadFriends(); } catch (e) { handleApiError(e); }
+    } }));
+    left.append(row);
+  }
+
+  const right = h('div', { class: 'panel box' });
+  right.append(h('h3', { text: `收到的申请（${data.incoming.length}）` }));
+  if (!data.incoming.length) right.append(h('div', { class: 'empty', text: '暂无待处理申请。' }));
+  for (const f of data.incoming) {
+    const row = h('div', { class: 'user-row' });
+    row.append(h('span', { class: 'nm', text: f.name }));
+    row.append(h('button', { class: 'mini primary', type: 'button', text: '同意', onclick: async () => {
+      try { await api(`/api/friends/${encodeURIComponent(f.id)}/accept`, { method: 'POST', body: '{}' }); toast('已成为好友', 'ok'); loadFriends(); } catch (e) { handleApiError(e); }
+    } }));
+    row.append(h('button', { class: 'mini', type: 'button', text: '拒绝', onclick: async () => {
+      try { await api(`/api/friends/${encodeURIComponent(f.id)}/reject`, { method: 'POST', body: '{}' }); toast('已拒绝', 'ok'); loadFriends(); } catch (e) { handleApiError(e); }
+    } }));
+    right.append(row);
+  }
+  right.append(h('div', { class: 'hr' }));
+  right.append(h('h3', { text: `已发出的申请（${data.outgoing.length}）` }));
+  if (!data.outgoing.length) right.append(h('div', { class: 'empty', text: '暂无。' }));
+  for (const f of data.outgoing) {
+    right.append(h('div', { class: 'user-row' }, h('span', { class: 'nm', text: f.name }), h('span', { class: 'pill warn', text: '等待对方同意' })));
+  }
+  right.append(h('div', { class: 'hr' }));
+  right.append(h('h3', { text: '隐私设置' }));
+  right.append(h('div', { class: 'hint-line', text: '树、课表、蓝图的可见性开关在右上角用户名 → 设置中调整。关闭后好友也无法查看对应内容。' }));
+
+  two.append(left, right);
+  view.append(two);
+}
+
+async function doUserSearch() {
+  const input = $('#friendsView input');
+  const q = input ? input.value.trim() : '';
+  if (q.length < 2) { toast('至少输入 2 个字符', 'error'); return; }
+  try {
+    const data = await api('/api/users?q=' + encodeURIComponent(q));
+    app.friends.search = data.users || [];
+    renderFriends();
+  } catch (e) { handleApiError(e); }
+}
+
+async function sendFriendRequest(user) {
+  try {
+    const data = await api('/api/friends', { method: 'POST', body: JSON.stringify({ uid: user.id }) });
+    toast(data && data.accepted ? '对方也已申请，已自动成为好友' : '好友申请已发送', 'ok');
+    loadFriends();
+  } catch (e) { handleApiError(e); }
+}
+
+async function viewFriendTree(id, name) {
+  try {
+    const data = await api(`/api/users/${encodeURIComponent(id)}/tree`);
+    app.tree = data.tree;
+    app.meta = data.meta;
+    app.readOnly = true;
+    app.visitor = { id, name };
+    app.selected.clear();
+    app.drawerId = null;
+    $('#drawer').hidden = true;
+    updateHeader();
+    app.fitted = false;
+    renderTreeAll();
+    switchView('tree');
+    toast(`正在只读查看 ${name} 的成长树`, 'ok');
+  } catch (e) { handleApiError(e); }
+}
+
+function openChat(friend) {
+  const list = h('div', { class: 'md-preview' });
+  list.style.minHeight = '280px';
+  list.style.maxHeight = '420px';
+  list.style.display = 'flex';
+  list.style.flexDirection = 'column';
+  list.style.gap = '6px';
+  const text = h('input', { placeholder: '输入消息…', maxlength: 1000 });
+  const send = h('button', { class: 'primary', type: 'button', text: '发送', onclick: submit });
+  let timer = null;
+  let lastCount = -1;
+
+  async function load() {
+    try {
+      const data = await api(`/api/chat/${encodeURIComponent(friend.id)}`);
+      if (data.messages.length === lastCount) return;
+      lastCount = data.messages.length;
+      list.replaceChildren();
+      if (!data.messages.length) list.append(h('div', { class: 'empty', text: '还没有消息，打个招呼吧。' }));
+      for (const m of data.messages) {
+        const mine = app.me && m.from === app.me.id;
+        const bubble = h('div', { text: m.text });
+        bubble.style.alignSelf = mine ? 'flex-end' : 'flex-start';
+        bubble.style.maxWidth = '78%';
+        bubble.style.padding = '7px 10px';
+        bubble.style.borderRadius = '10px';
+        bubble.style.background = mine ? 'rgba(79,209,197,.16)' : 'rgba(255,255,255,.05)';
+        bubble.style.border = '1px solid ' + (mine ? 'rgba(79,209,197,.35)' : 'var(--line)');
+        bubble.style.whiteSpace = 'pre-wrap';
+        bubble.style.wordBreak = 'break-word';
+        bubble.title = fmtDate(m.at);
+        list.append(bubble);
+      }
+      list.scrollTop = list.scrollHeight;
+    } catch (e) { /* 轮询失败静默 */ }
+  }
+  async function submit() {
+    const value = text.value.trim();
+    if (!value) return;
+    try {
+      await api(`/api/chat/${encodeURIComponent(friend.id)}`, { method: 'POST', body: JSON.stringify({ text: value }) });
+      text.value = '';
+      lastCount = -1;
+      await load();
+    } catch (e) { handleApiError(e); }
+  }
+  text.addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  const modal = openModal(`与 ${friend.name} 聊天`, h('div', {}, list, h('div', { class: 'row' }, text, send)), [], {
+    onClose: () => clearInterval(timer),
+  });
+  load();
+  timer = setInterval(load, 3000);
+}
+
+// ---------------------------------------------------------------- 反馈
+async function loadFeedback() {
+  const view = $('#feedbackView');
+  if (!view) return;
+  view.replaceChildren();
+  view.append(h('div', { class: 'view-head' }, h('h1', { text: '反馈' }), h('span', { class: 'muted', text: app.me && app.me.role === 'admin' ? '管理员可查看并回复所有反馈。' : '问题和建议会直达管理员。' })));
+  const text = h('textarea', { maxlength: 2000, placeholder: '写下你遇到的问题或想法…' });
+  text.style.minHeight = '70px';
+  const submit = h('button', { class: 'primary', type: 'button', text: '提交反馈', onclick: async () => {
+    const value = text.value.trim();
+    if (!value) { toast('反馈内容不能为空', 'error'); return; }
+    try {
+      await api('/api/feedback', { method: 'POST', body: JSON.stringify({ text: value }) });
+      text.value = '';
+      toast('反馈已提交', 'ok');
+      loadFeedback();
+    } catch (e) { handleApiError(e); }
+  } });
+  const box = h('div', { class: 'panel box' }, text, h('div', { class: 'row' }, submit));
+  box.style.marginBottom = '12px';
+  view.append(box);
+  try {
+    const data = await api('/api/feedback');
+    if (!data.feedback.length) view.append(h('div', { class: 'empty-state', text: '暂无反馈。' }));
+    for (const item of data.feedback) {
+      const card = h('div', { class: 'fb-item' });
+      card.append(h('div', { class: 'fb-head' }, h('span', { text: item.name }), h('span', { text: fmtDate(item.createdAt) }), h('span', { class: 'pill mutedp', text: item.uid === (app.me && app.me.id) ? '我的' : '用户' })));
+      card.append(h('div', { class: 'fb-text', text: item.text }));
+      for (const reply of item.replies || []) {
+        card.append(h('div', { class: 'reply' }, h('div', { class: 'fb-head' }, h('span', { text: `${reply.name} 回复` }), h('span', { text: fmtDate(reply.createdAt) })), h('div', { text: reply.text })));
+      }
+      const actions = h('div', { class: 'row' });
+      actions.style.marginTop = '8px';
+      actions.append(h('button', { class: 'mini', type: 'button', text: '回复', onclick: () => openReplyModal(item) }));
+      if (app.me && (app.me.role === 'admin' || item.uid === app.me.id)) {
+        actions.append(h('button', { class: 'mini danger', type: 'button', text: '删除', onclick: async () => {
+          if (!(await confirmDialog('删除这条反馈？', '删除'))) return;
+          try { await api(`/api/feedback/${encodeURIComponent(item.id)}`, { method: 'DELETE' }); toast('已删除', 'ok'); loadFeedback(); } catch (e) { handleApiError(e); }
+        } }));
+      }
+      card.append(actions);
+      view.append(card);
+    }
+  } catch (e) { handleApiError(e); }
+}
+
+function openReplyModal(item) {
+  const text = h('textarea', { maxlength: 2000, placeholder: '回复内容…' });
+  const modal = openModal('回复反馈', h('div', {}, h('div', { class: 'muted', text: item.text }), h('label', { text: '回复' }), text), [
+    { label: '取消', onClick: () => modal.close() },
+    { label: '发送', primary: true, onClick: async () => {
+      const value = text.value.trim();
+      if (!value) { toast('回复不能为空', 'error'); return; }
+      try { await api(`/api/feedback/${encodeURIComponent(item.id)}/reply`, { method: 'POST', body: JSON.stringify({ text: value }) }); modal.close(); toast('已回复', 'ok'); loadFeedback(); } catch (e) { handleApiError(e); }
+    } },
+  ]);
+}
+
+// ---------------------------------------------------------------- 管理
+async function loadAdmin() {
+  const view = $('#adminView');
+  if (!view) return;
+  view.replaceChildren();
+  if (!app.me || app.me.role !== 'admin') { view.append(h('div', { class: 'empty-state', text: '需要管理员权限。' })); return; }
+  view.append(h('div', { class: 'view-head' }, h('h1', { text: '管理后台' }), h('span', { class: 'muted', text: '角色调整与账号删除会即时生效。' }), h('span', { class: 'grow' }), h('button', { class: 'ghost', type: 'button', text: '刷新', onclick: loadAdmin })));
+  try {
+    const data = await api('/api/admin/users');
+    const wrap = h('div', { class: 'table-wrap' });
+    const table = h('table', {});
+    table.append(h('thead', {}, h('tr', {},
+      h('th', { text: '用户名' }), h('th', { text: '角色' }), h('th', { text: '节点' }), h('th', { text: '蓝图' }), h('th', { text: '注册时间' }), h('th', { text: '最近登录' }), h('th', { text: '操作' })
+    )));
+    const tbody = h('tbody', {});
+    for (const u of data.users) {
+      const tr = h('tr', {});
+      tr.append(h('td', {}, h('span', { text: u.name }), u.superAdmin ? h('span', { class: 'pill warn', text: '超级管理员' }) : null));
+      tr.append(h('td', {}, h('span', { class: 'pill ' + (u.role === 'admin' ? 'ok' : 'mutedp'), text: u.role })));
+      tr.append(h('td', { class: 'mono', text: String(u.abilityCount) }));
+      tr.append(h('td', { class: 'mono', text: String(u.blueprintCount) }));
+      tr.append(h('td', { text: fmtDate(u.createdAt) }));
+      tr.append(h('td', { text: fmtDate(u.lastLoginAt) }));
+      const ops = h('td', {});
+      ops.append(h('button', { class: 'mini', type: 'button', text: '蓝图', onclick: () => showUserBlueprints(u) }));
+      if (!u.superAdmin) {
+        ops.append(h('button', { class: 'mini', type: 'button', text: u.role === 'admin' ? '降为普通' : '设为管理员', onclick: async () => {
+          try { await api(`/api/admin/users/${encodeURIComponent(u.id)}/role`, { method: 'POST', body: JSON.stringify({ role: u.role === 'admin' ? 'user' : 'admin' }) }); toast('角色已更新', 'ok'); loadAdmin(); } catch (e) { handleApiError(e); }
+        } }));
+        ops.append(h('button', { class: 'mini danger', type: 'button', text: '删除', onclick: async () => {
+          if (!(await confirmDialog(`删除账号「${u.name}」？会级联清理其树、笔记、照片、蓝图、好友、聊天、反馈与会话。`, '删除账号'))) return;
+          try { await api(`/api/admin/users/${encodeURIComponent(u.id)}`, { method: 'DELETE' }); toast('账号已删除', 'ok'); loadAdmin(); } catch (e) { handleApiError(e); }
+        } }));
+      }
+      tr.append(ops);
+      tbody.append(tr);
+    }
+    table.append(tbody);
+    wrap.append(table);
+    view.append(wrap);
+  } catch (e) { handleApiError(e); }
+}
+
+async function showUserBlueprints(user) {
+  try {
+    const data = await api(`/api/admin/users/${encodeURIComponent(user.id)}/blueprints`);
+    const content = h('div', {});
+    if (!data.blueprints.length) content.append(h('div', { class: 'empty', text: '该用户暂无蓝图。' }));
+    for (const bp of data.blueprints) {
+      content.append(h('div', { class: 'user-row' },
+        h('span', { class: 'nm', text: bp.title }),
+        h('span', { class: 'pill mutedp', text: `${bp.score} 分` }),
+        h('span', { class: 'pill', text: bp.visibility })
+      ));
+    }
+    openModal(`${user.name} 的蓝图`, content, [{ label: '关闭', onClick: closeModal }]);
+  } catch (e) { handleApiError(e); }
+}
+
+// ---------------------------------------------------------------- 设置
+function openSettings() {
+  if (!app.me) return;
+  const priv = app.me.privacy || { tree: true, timer: true, bp: true };
+  const treeCb = h('input', { type: 'checkbox', checked: !!priv.tree });
+  const timerCb = h('input', { type: 'checkbox', checked: !!priv.timer });
+  const bpCb = h('input', { type: 'checkbox', checked: !!priv.bp });
+  [treeCb, timerCb, bpCb].forEach(cb => { cb.style.width = 'auto'; });
+  const oldPwd = h('input', { type: 'password', autocomplete: 'current-password' });
+  const newPwd = h('input', { type: 'password', autocomplete: 'new-password' });
+  const importInput = h('input', { type: 'file', accept: 'application/json,.json' });
+  importInput.style.display = 'none';
+  importInput.addEventListener('change', async () => {
+    const file = importInput.files && importInput.files[0];
+    if (!file) return;
+    try {
+      const text = await file.text();
+      const tree = JSON.parse(text);
+      const data = await api('/api/import', { method: 'POST', body: JSON.stringify({ tree }) });
+      app.tree = data.tree;
+      app.meta = data.meta;
+      updateHeader();
+      renderTreeAll();
+      closeModal();
+      toast('导入成功', 'ok');
+    } catch (e) { handleApiError(e); }
+  });
+
+  const content = h('div', {},
+    h('h3', { text: '隐私' }),
+    h('label', { class: 'row' }, treeCb, h('span', { text: '允许好友查看我的树' })),
+    h('label', { class: 'row' }, timerCb, h('span', { text: '允许好友查看我的课表与时间' })),
+    h('label', { class: 'row' }, bpCb, h('span', { text: '允许好友查看我的好友可见蓝图（关闭后仅公开蓝图可见）' })),
+    h('div', { class: 'modal-foot' }, h('button', { class: 'mini primary', type: 'button', text: '保存隐私设置', onclick: async () => {
+      try {
+        const data = await api('/api/users/me', { method: 'PUT', body: JSON.stringify({ privacy: { tree: treeCb.checked, timer: timerCb.checked, bp: bpCb.checked } }) });
+        app.me = data.user;
+        toast('隐私设置已更新', 'ok');
+      } catch (e) { handleApiError(e); }
+    } })),
+    h('div', { class: 'hr' }),
+    h('h3', { text: '修改密码' }),
+    h('div', { class: 'hint-line', text: '修改成功后其他设备上的会话会被注销。' }),
+    h('label', { text: '当前密码' }), oldPwd,
+    h('label', { text: '新密码（至少 8 位）' }), newPwd,
+    h('div', { class: 'modal-foot' }, h('button', { class: 'mini primary', type: 'button', text: '更新密码', onclick: async () => {
+      if (newPwd.value.length < 8) { toast('新密码至少 8 位', 'error'); return; }
+      try {
+        await api('/api/auth/password', { method: 'POST', body: JSON.stringify({ oldPassword: oldPwd.value, newPassword: newPwd.value }) });
+        oldPwd.value = ''; newPwd.value = '';
+        toast('密码已更新，其他设备已下线', 'ok');
+      } catch (e) { handleApiError(e); }
+    } })),
+    h('div', { class: 'hr' }),
+    h('h3', { text: '数据' }),
+    h('div', { class: 'row' },
+      h('button', { class: 'mini', type: 'button', text: '导出树 JSON', onclick: exportTree }),
+      h('button', { class: 'mini', type: 'button', text: '导入树 JSON', onclick: () => importInput.click() })
+    ),
+    importInput,
+    h('div', { class: 'hr' }),
+    h('h3', { text: '账号' }),
+    h('div', { class: 'kv' }, h('span', { class: 'k', text: '用户名' }), h('span', { class: 'v', text: app.me.name }), h('span', { class: 'k', text: '角色' }), h('span', { class: 'v', text: app.me.role }), h('span', { class: 'k', text: '注册' }), h('span', { class: 'v', text: fmtDate(app.me.createdAt) })),
+    h('div', { class: 'modal-foot' }, h('button', { class: 'danger', type: 'button', text: '退出登录', onclick: logout }))
+  );
+  openModal('账号与设置', content, [{ label: '关闭', onClick: closeModal }]);
+}
+
+async function exportTree() {
+  try {
+    const res = await fetch('/api/export', { credentials: 'same-origin' });
+    if (!res.ok) throw new Error('导出失败');
+    const blob = await res.blob();
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `growth-tree-${app.me.name}.json`;
+    document.body.append(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  } catch (e) { handleApiError(e); }
+}
+
+// ---------------------------------------------------------------- 视图切换与导航
+function switchView(name) {
+  app.view = name;
+  document.querySelectorAll('.view').forEach(v => { v.hidden = true; });
+  const target = document.getElementById(name + 'View');
+  if (target) target.hidden = false;
+  document.querySelectorAll('.navbtn').forEach(b => b.classList.toggle('active', b.dataset.view === name));
+  if (name !== 'timetable') stopTtTimers();
+  if (name === 'tree') {
+    renderTreeAll();
+    setTimeout(() => { renderCanvas(); updateHeader(); }, 30);
+  }
+  if (name === 'timetable') { renderTimetable(); updateHeader(); }
+  if (name === 'notes') loadNotes();
+  if (name === 'blueprints') loadBlueprints();
+  if (name === 'friends') loadFriends();
+  if (name === 'feedback') loadFeedback();
+  if (name === 'admin') loadAdmin();
+  $('#moreMenu').hidden = true;
+}
+
+function renderMoreMenu() {
+  const menu = $('#moreMenu');
+  menu.replaceChildren();
+  const views = [['tree', '树'], ['timetable', '课表'], ['notes', '笔记'], ['blueprints', '蓝图'], ['friends', '好友'], ['feedback', '反馈']];
+  if (app.me && app.me.role === 'admin') views.push(['admin', '管理']);
+  for (const [id, label] of views) {
+    menu.append(h('button', { type: 'button', text: label, onclick: () => switchView(id) }));
+  }
+  menu.append(h('button', { type: 'button', text: '设置', onclick: () => { menu.hidden = true; openSettings(); } }));
+  menu.append(h('button', { type: 'button', text: '退出登录', onclick: () => { menu.hidden = true; logout(); } }));
+}
+
+// ---------------------------------------------------------------- 绑定事件
+function bindEvents() {
+  $('#tabLogin').addEventListener('click', () => switchAuthTab(false));
+  $('#tabRegister').addEventListener('click', () => switchAuthTab(true));
+  $('#captchaRefresh').addEventListener('click', refreshChallenge);
+  $('#loginForm').addEventListener('submit', login);
+  $('#registerForm').addEventListener('submit', register);
+  $('#userBtn').addEventListener('click', openSettings);
+  $('#moreBtn').addEventListener('click', () => {
+    const menu = $('#moreMenu');
+    if (menu.hidden) { renderMoreMenu(); menu.hidden = false; }
+    else menu.hidden = true;
+  });
+  document.querySelectorAll('.navbtn').forEach(btn => btn.addEventListener('click', () => switchView(btn.dataset.view)));
+  document.addEventListener('click', e => {
+    const menu = $('#moreMenu');
+    if (!menu.hidden && !menu.contains(e.target) && e.target !== $('#moreBtn')) menu.hidden = true;
+  });
+
+  bindCanvas();  window.addEventListener('resize', () => {
+    if (app.view === 'tree' && app.tree) {
+      const ov = $('#treeView').classList.contains('drawer-open');
+      setTimeout(renderCanvas, 50);
+    }
+  });
+  document.addEventListener('keydown', e => {
+    if (e.key === 'Escape') {
+      if (app.selected.size) { app.selected.clear(); renderCanvas(); }
+      else if (app.drawerId) closeDrawer();
+    }
+  });
+}
+
+async function boot() {
+  bindEvents();
+  renderToolbar();
+  try {
+    const data = await api('/api/auth/me');
+    app.me = data.user;
+    await enterApp();
+  } catch (e) {
+    showAuth();
+  }
+}
+
+boot();
+</script>
+</body>
+</html>

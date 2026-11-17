@@ -1,0 +1,7 @@
+.git
+data
+legacy-sites
+node_modules
+*.qoder.site
+.qoder
+dist

@@ -1,0 +1,13 @@
+{
+  "name": "growth-tree",
+  "version": "1.0.0",
+  "private": true,
+  "description": "能力/知识点成长树：把本周空闲时间换成科技点，点亮你的知识点。",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

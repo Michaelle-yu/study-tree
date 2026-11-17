@@ -1,0 +1,6 @@
+dist/
+*.qoder.site
+.qoder/
+data/
+node_modules/
+*.log
