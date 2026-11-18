@@ -1,1884 +1,2297 @@
 'use strict';
 
-/**
- * 成长树 · 单文件服务端
- * Node.js >= 18，零第三方依赖，仅使用 http / fs / crypto / path。
- * 启动：node server.js（默认 127.0.0.1:5173）
- * 环境变量：PORT、HOST、DATA_DIR、SECURE_COOKIE=1（公网 HTTPS 时启用 Secure Cookie）
+/*
+ * study-tree · 后端服务（多用户版）
+ * 零依赖，只用 Node 内置模块，`node server.js` 即可启动。
+ *
+ * 功能一览：
+ *   - 账号：注册/登录/登出（scrypt 加盐哈希 + httpOnly Cookie 会话）、昵称、头像
+ *   - 学习树：能力/知识节点的增删改、点亮、周常任务重置、等级经验
+ *   - 笔记：md/pdf/doc/docx/ppt/pptx/图片 的上传、阅读、下载（按账号隔离）
+ *   - 蓝图：发布/导入/评分，可见性分 公开 / 仅好友 / 私人，市场 + 好友蓝图筛选
+ *   - 社交：好友（申请-同意制）、访客模式、管理员后台、意见反馈
+ *
+ * 目录结构：
+ *   data/users.json            账号表（scrypt 加盐，不存明文）
+ *   data/sessions.json         登录会话
+ *   data/users/<uid>/tree.json 每个用户自己的study-tree
+ *   data/users/<uid>/notes/    每个用户自己的笔记文件
+ *   data/blueprints.json       蓝图索引（所有人可见）
+ *   data/blueprints/<id>/      蓝图快照 + 附件副本
  */
 
 const http = require('http');
 const fs = require('fs');
-const crypto = require('crypto');
+const fsp = fs.promises;
 const path = require('path');
+const os = require('os');
+const crypto = require('crypto');
+const { exec } = require('child_process');
 
 const ROOT = __dirname;
-const DATA_DIR = process.env.DATA_DIR ? path.resolve(process.env.DATA_DIR) : path.join(ROOT, 'data');
-const PORT = Number(process.env.PORT || 5173);
+const DATA_DIR = process.env.TT_DATA_DIR ? path.resolve(process.env.TT_DATA_DIR) : path.join(ROOT, 'data');
+const USERS_FILE = path.join(DATA_DIR, 'users.json');
+const SESSIONS_FILE = path.join(DATA_DIR, 'sessions.json');
+const USERS_DIR = path.join(DATA_DIR, 'users');
+const BP_FILE = path.join(DATA_DIR, 'blueprints.json');
+const FRIENDS_FILE = path.join(DATA_DIR, 'friends.json');
+const FEEDBACK_FILE = path.join(DATA_DIR, 'feedback.json');
+const CHAT_FILE = path.join(DATA_DIR, 'chats.json');
+const BP_DIR = path.join(DATA_DIR, 'blueprints');
+const LEGACY_TREE = path.join(DATA_DIR, 'tree.json');
+const LEGACY_NOTES = path.join(DATA_DIR, 'notes');
+
+const START_PORT = Number(process.env.PORT || 5173);
+const API_VERSION = 12;
+// TT_PUBLIC=1：准备放到公网时打开。会启用严格安全头、Secure Cookie、HSTS、禁止被 iframe 嵌入
+const PUBLIC_MODE = process.env.TT_PUBLIC === '1';
+// 只允许这几个文件被静态访问；数据目录、源码、备份一律不对外
+const STATIC_FILES = new Set(['/index.html', '/favicon.ico', '/robots.txt']);          // 前端会比对：低于这个值说明后台还是旧进程
+const STARTED_AT = Date.now();
 const HOST = process.env.HOST || '127.0.0.1';
-const SECURE_COOKIE = process.env.SECURE_COOKIE === '1';
 const MAX_BODY = 64 * 1024 * 1024;
-const MAX_NOTE = 2 * 1024 * 1024;
-const MAX_PHOTO = 8 * 1024 * 1024;
-const SESSION_MS = 30 * 24 * 60 * 60 * 1000;
-const SUPER_ADMIN = 'protractor45';
-const WEEK_RE = /^\d{4}W\d{2}$/;
-const SLOTS = [[480, 720], [720, 1020], [1140, 1320]];
+/* 单棵树的数据规模上限：防止登录用户塞超大结构放大内存/磁盘 */
+const MAX_ABILITIES = 3000;
+const MAX_FILES = 6000;
+const MAX_TASKS = 200;
+const VERSION = 7;
+const INITIAL_POINTS = 10;
+const SESSION_DAYS = 30;
 
-class HttpError extends Error {
-  constructor(status, message) {
-    super(message);
-    this.status = status;
-  }
-}
-const fail = (status, message) => { throw new HttpError(status, message); };
+const DEFAULT_CATEGORIES = [
+  { id: 'cat_art', name: '艺术' },
+  { id: 'cat_sport', name: '运动' },
+  { id: 'cat_study', name: '学习' }
+];
 
-// ---------------------------------------------------------------- 基础工具
-
-function clampInt(v, min, max, fallback) {
-  const n = Number(v);
-  if (!Number.isFinite(n)) return fallback;
-  return Math.min(max, Math.max(min, Math.round(n)));
-}
-
-function clone(v) { return JSON.parse(JSON.stringify(v)); }
-
-function safeEqual(a, b) {
-  const ba = Buffer.from(String(a));
-  const bb = Buffer.from(String(b));
-  return ba.length === bb.length && crypto.timingSafeEqual(ba, bb);
-}
-
-function safeFileName(name) {
-  if (typeof name !== 'string') return null;
-  const base = path.basename(name.replace(/\\/g, '/')).trim();
-  if (!base || base === '.' || base === '..') return null;
-  if (base.includes('..') || /[\u0000-\u001f<>:"/\\|?*]/.test(base)) return null;
-  if (!/^[\w.\-\u4e00-\u9fa5 ()（）\[\]【】]+$/.test(base)) return null;
-  if (base.length > 100) return null;
-  return base;
-}
-
-// ---------------------------------------------------------------- 文件存储
-
-const chains = new Map();
-function withLock(key, fn) {
-  const prev = chains.get(key) || Promise.resolve();
-  const run = prev.then(fn, fn);
-  chains.set(key, run.catch(() => {}));
-  return run;
-}
-
-async function ensureDir(dir) { await fs.promises.mkdir(dir, { recursive: true }); }
-
-async function readJsonFile(file, fallback) {
-  try {
-    return JSON.parse(await fs.promises.readFile(file, 'utf8'));
-  } catch {
-    return fallback;
-  }
-}
-
-async function writeJsonFile(file, value) {
-  await ensureDir(path.dirname(file));
-  const tmp = `${file}.${process.pid}.${Date.now()}.tmp`;
-  await fs.promises.writeFile(tmp, JSON.stringify(value, null, 2));
-  await fs.promises.rename(tmp, file);
-}
-
-const store = {
-  users: [],
-  sessions: {},
-  friends: [],
-  chats: [],
-  feedback: [],
-  blueprints: [],
+const MIME = {
+  '.html': 'text/html; charset=utf-8',
+  '.js': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8',
+  '.json': 'application/json; charset=utf-8',
+  '.svg': 'image/svg+xml',
+  '.png': 'image/png',
+  '.ico': 'image/x-icon',
+  '.md': 'text/markdown; charset=utf-8',
+  '.markdown': 'text/markdown; charset=utf-8',
+  '.txt': 'text/plain; charset=utf-8',
+  '.pdf': 'application/pdf',
+  '.doc': 'application/msword',
+  '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+  '.ppt': 'application/vnd.ms-powerpoint',
+  '.pptx': 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.webp': 'image/webp',
+  '.bmp': 'image/bmp'
 };
 
-const globalFile = name => path.join(DATA_DIR, `${name}.json`);
-async function saveGlobal(name) {
-  await writeJsonFile(globalFile(name), store[name]);
-}
-
-async function initStore() {
-  await ensureDir(DATA_DIR);
-  await ensureDir(path.join(DATA_DIR, 'users'));
-  await ensureDir(path.join(DATA_DIR, 'blueprints'));
-  store.users = await readJsonFile(globalFile('users'), []);
-  store.sessions = await readJsonFile(globalFile('sessions'), {});
-  store.friends = await readJsonFile(globalFile('friends'), []);
-  store.chats = await readJsonFile(globalFile('chats'), []);
-  store.feedback = await readJsonFile(globalFile('feedback'), []);
-  store.blueprints = await readJsonFile(globalFile('blueprints'), []);
-  const now = Date.now();
-  let cleaned = false;
-  for (const token of Object.keys(store.sessions)) {
-    if (!store.sessions[token] || store.sessions[token].exp < now) { delete store.sessions[token]; cleaned = true; }
-  }
-  if (cleaned) await saveGlobal('sessions');
-}
-
-const treeFile = uid => path.join(DATA_DIR, 'users', uid, 'tree.json');
-const notesDir = uid => path.join(DATA_DIR, 'users', uid, 'notes');
-const photosDir = uid => path.join(DATA_DIR, 'users', uid, 'photos');
-const blueprintDir = id => path.join(DATA_DIR, 'blueprints', id);
-
-async function readTree(uid) {
-  const t = await readJsonFile(treeFile(uid), null);
-  return t && typeof t === 'object' ? t : defaultTree();
-}
-async function writeTree(uid, tree) { await writeJsonFile(treeFile(uid), tree); }
-
-async function pruneRemovedPhotos(uid, prevFiles, nextFiles) {
-  const keep = new Set((nextFiles || []).map(f => f.storedAs).filter(Boolean));
-  for (const f of prevFiles || []) {
-    if (f.local || !f.storedAs || keep.has(f.storedAs)) continue;
-    await fs.promises.unlink(path.join(photosDir(uid), f.storedAs)).catch(() => {});
-  }
-}
-
-// ---------------------------------------------------------------- 周与科技点
-
-function isoWeekKey(date) {
-  const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
-  const day = d.getUTCDay() || 7;
-  d.setUTCDate(d.getUTCDate() + 4 - day);
-  const yearStart = new Date(Date.UTC(d.getUTCFullYear(), 0, 1));
-  const week = Math.ceil((((d - yearStart) / 86400000) + 1) / 7);
-  return `${d.getUTCFullYear()}W${String(week).padStart(2, '0')}`;
-}
-
-function weekDayIndex(now) { return ((now.getDay() + 6) % 7) + 1; }
-
-function timeToMin(t) {
-  if (typeof t !== 'string' || !/^\d{2}:\d{2}$/.test(t)) return null;
-  const [h, m] = t.split(':').map(Number);
-  if (h > 23 || m > 59) return null;
-  return h * 60 + m;
-}
-
-function mergeIntervals(list) {
-  const sorted = list.filter(i => i[1] > i[0]).sort((a, b) => a[0] - b[0]);
-  const out = [];
-  for (const iv of sorted) {
-    const last = out[out.length - 1];
-    if (last && iv[0] <= last[1]) last[1] = Math.max(last[1], iv[1]);
-    else out.push([iv[0], iv[1]]);
-  }
-  return out;
-}
-
-function overlapTotal(merged, start, end) {
-  let total = 0;
-  for (const [a, b] of merged) {
-    const s = Math.max(a, start), e = Math.min(b, end);
-    if (e > s) total += e - s;
-  }
-  return total;
-}
-
-function busyForDay(table, day) {
-  const list = [];
-  for (const c of table.courses || []) {
-    if (Number(c.day) === day) list.push([timeToMin(c.start), timeToMin(c.end)]);
-  }
-  for (const p of table.plans || []) {
-    if (Array.isArray(p.days) && p.days.map(Number).includes(day)) list.push([timeToMin(p.start), timeToMin(p.end)]);
-  }
-  return mergeIntervals(list.filter(iv => iv[0] !== null && iv[1] !== null));
-}
-
-function freeMinutes(table, now) {
-  const today = weekDayIndex(now);
-  const nowMin = now.getHours() * 60 + now.getMinutes();
-  let total = 0;
-  let remaining = 0;
-  for (let day = 1; day <= 7; day++) {
-    const busy = busyForDay(table, day);
-    for (const [s, e] of SLOTS) {
-      total += (e - s) - overlapTotal(busy, s, e);
-      if (day < today) continue;
-      const from = day === today ? Math.max(s, nowMin) : s;
-      if (e > from) remaining += (e - from) - overlapTotal(busy, from, e);
-    }
-  }
-  return { total, remaining };
-}
-
-function ensureWeek(tree, now) {
-  const key = isoWeekKey(now);
-  let changed = false;
-  if (!tree.week || tree.week.key !== key) {
-    const weeks = tree.timer && tree.timer.weeks && typeof tree.timer.weeks === 'object' ? tree.timer.weeks : {};
-    const prevKey = Object.keys(weeks).filter(k => WEEK_RE.test(k) && k < key).sort().pop();
-    const inherited = prevKey && weeks[prevKey]
-      ? clone(weeks[prevKey])
-      : (weeks[key] ? clone(weeks[key]) : { courses: [], plans: [] });
-    weeks[key] = inherited;
-    const keys = Object.keys(weeks).sort();
-    while (keys.length > 12) delete weeks[keys.shift()];
-    tree.timer = tree.timer || {};
-    tree.timer.weeks = weeks;
-    tree.timer.weekKey = key;
-    tree.timer.spent = 0;
-    tree.timer.bonus = 0;
-    tree.week = { key };
-    tree.tasks = (tree.tasks || []).map(t => ({ ...t, done: false, doneAt: null }));
-    changed = true;
-  }
-  tree.timer = tree.timer || { rate: 50, spent: 0, bonus: 0, weeks: {} };
-  tree.timer.weeks = tree.timer.weeks || {};
-  if (!tree.timer.weeks[key]) { tree.timer.weeks[key] = { courses: [], plans: [] }; changed = true; }
-  if (!tree.week) { tree.week = { key }; changed = true; }
-  return changed;
-}
-
-function taskBonus(tree) {
-  return (tree.tasks || []).reduce((sum, t) => sum + (t.done ? clampInt(t.points, 0, 1000, 0) : 0), 0);
-}
-
-function computeMeta(tree, now = new Date()) {
-  const key = tree.week && tree.week.key ? tree.week.key : isoWeekKey(now);
-  const table = tree.timer.weeks[key] || { courses: [], plans: [] };
-  const { total, remaining } = freeMinutes(table, now);
-  const rate = clampInt(tree.timer.rate, 0, 100, 50);
-  const bonus = taskBonus(tree);
-  const available = Math.floor(((remaining / 60) * (rate / 100) + bonus - (tree.timer.spent || 0)) * 100) / 100;
-  const exp = Math.min(1500, Math.max(0, Number(tree.exp) || 0));
-  return {
-    available,
-    remainingMinutes: Math.round(remaining),
-    totalFreeMinutes: Math.round(total),
-    rate,
-    bonus,
-    used: Number(tree.timer.spent) || 0,
-    level: Math.min(15, Math.floor(exp / 100) + 1),
-    exp,
-    weekKey: key,
-  };
-}
+/* ------------------------------------------------------------------ */
+/* 基础工具                                                            */
+/* ------------------------------------------------------------------ */
 
 function defaultTree() {
-  const key = isoWeekKey(new Date());
   return {
-    version: 1,
-    points: 0,
+    version: VERSION,
+    categories: DEFAULT_CATEGORIES.map((c) => ({ id: c.id, name: c.name })),
+    points: INITIAL_POINTS,
+    abilities: [],
+    files: [],
     exp: 0,
-    categories: [
-      { id: 'cat_art', name: '艺术' },
-      { id: 'cat_sport', name: '运动' },
-      { id: 'cat_study', name: '学习' },
-    ],
-    abilities: [],
-    files: [],
     tasks: [],
-    week: { key },
-    timer: { rate: 50, spent: 0, bonus: 0, weekKey: key, weeks: { [key]: { courses: [], plans: [] } } },
+    week: { key: '' },
+    /* 时间规划：把一周的空闲时间按转化率换成科技点 */
+    timer: { rate: 50, courses: [], plans: [], spent: 0, bonus: 0, weekKey: '' }
   };
 }
 
-// ---------------------------------------------------------------- 树校验
-
-function sanitizeWeekTable(raw) {
-  const table = { courses: [], plans: [] };
-  if (!raw || typeof raw !== 'object') return table;
-  for (const c of Array.isArray(raw.courses) ? raw.courses.slice(0, 300) : []) {
-    if (!c || typeof c !== 'object') continue;
-    const start = timeToMin(c.start), end = timeToMin(c.end), day = clampInt(c.day, 1, 7, 0);
-    const title = typeof c.title === 'string' ? c.title.trim() : '';
-    if (!title || title.length > 40 || !day || start === null || end === null) continue;
-    if (start < 480 || end > 1320 || start >= end) continue;
-    table.courses.push({
-      id: typeof c.id === 'string' && c.id.length <= 64 ? c.id : crypto.randomUUID(),
-      day, start: c.start, end: c.end, title,
-    });
-  }
-  for (const p of Array.isArray(raw.plans) ? raw.plans.slice(0, 300) : []) {
-    if (!p || typeof p !== 'object') continue;
-    const start = timeToMin(p.start), end = timeToMin(p.end);
-    const title = typeof p.title === 'string' ? p.title.trim() : '';
-    const days = [...new Set((Array.isArray(p.days) ? p.days : []).map(Number).filter(d => d >= 1 && d <= 7))].sort();
-    if (!title || title.length > 40 || !days.length || start === null || end === null) continue;
-    if (start < 480 || end > 1320 || start >= end) continue;
-    table.plans.push({
-      id: typeof p.id === 'string' && p.id.length <= 64 ? p.id : crypto.randomUUID(),
-      days, start: p.start, end: p.end, title, break: p.break === true,
-    });
-  }
-  return table;
+function stamp() {
+  const d = new Date();
+  const p = (n) => (n < 10 ? '0' + n : '' + n);
+  return `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(d.getSeconds())}`;
 }
 
-function sanitizeTree(input, prev, options = {}) {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) fail(400, '数据结构不正确');
-  const now = new Date();
-  const charge = options.charge !== false;
-  const base = clone(prev && typeof prev === 'object' ? prev : defaultTree());
-  ensureWeek(base, now);
-
-  const result = {
-    version: (Number(base.version) || 0) + 1,
-    points: 0,
-    exp: Math.min(1500, Math.max(0, Number(base.exp) || 0)),
-    categories: [],
-    abilities: [],
-    files: [],
-    tasks: [],
-    week: { key: base.week.key },
-    timer: {
-      rate: clampInt(input.timer && input.timer.rate, 0, 100, clampInt(base.timer.rate, 0, 100, 50)),
-      spent: Math.max(0, Number(base.timer.spent) || 0),
-      bonus: 0,
-      weekKey: base.week.key,
-      weeks: {},
-    },
-  };
-
-  // 分类
-  const rawCats = Array.isArray(input.categories) ? input.categories : base.categories;
-  if (rawCats.length > 20) fail(400, '分类数量超过上限（20 个）');
-  const catIds = new Set();
-  const catNames = new Set();
-  for (const c of rawCats) {
-    if (!c || typeof c !== 'object') continue;
-    const id = typeof c.id === 'string' ? c.id.trim() : '';
-    const name = typeof c.name === 'string' ? c.name.trim() : '';
-    if (!id || id.length > 64 || !name || name.length > 30) fail(400, '分类名称或编号不合法');
-    if (catIds.has(id)) fail(400, '分类编号重复');
-    if (catNames.has(name.toLowerCase())) fail(400, `分类「${name}」重复`);
-    catIds.add(id);
-    catNames.add(name.toLowerCase());
-    result.categories.push({ id, name });
-  }
-  if (!result.categories.length) {
-    result.categories = defaultTree().categories;
-    for (const c of result.categories) catIds.add(c.id);
-  }
-
-  // 能力节点（第一遍：基础字段）
-  const rawAbilities = Array.isArray(input.abilities) ? input.abilities : base.abilities;
-  if (!Array.isArray(rawAbilities)) fail(400, '能力列表格式不正确');
-  if (rawAbilities.length > 300) fail(400, '节点数量超过上限（300 个）');
-  const prevById = new Map((base.abilities || []).map(a => [a.id, a]));
-  const idSet = new Set();
-  const names = new Set();
-
-  for (const a of rawAbilities) {
-    if (!a || typeof a !== 'object') fail(400, '能力节点格式不正确');
-    const id = typeof a.id === 'string' ? a.id.trim() : '';
-    if (!/^[A-Za-z0-9_-]{1,64}$/.test(id)) fail(400, '能力节点编号不合法');
-    if (idSet.has(id)) fail(400, '能力节点编号重复');
-    idSet.add(id);
-    const name = typeof a.name === 'string' ? a.name.trim() : '';
-    if (!name || name.length > 40) fail(400, '能力名称需为 1–40 个字符');
-    const key = name.toLowerCase();
-    if (names.has(key)) fail(400, `能力名称「${name}」已存在（同一棵树内唯一）`);
-    names.add(key);
-    const kind = a.kind === 'group' ? 'group' : a.kind === 'leaf' ? 'leaf' : null;
-    if (!kind) fail(400, '能力类型必须为 group 或 leaf');
-    const prevNode = prevById.get(id);
-    const wasUnlocked = prevNode ? prevNode.unlocked === true : false;
-    const unlocked = kind === 'leaf' && (wasUnlocked || a.unlocked === true);
-    const cost = kind === 'leaf' ? clampInt(a.cost, 1, 100000, 0) : 0;
-    if (kind === 'leaf' && !cost) fail(400, '知识点成本必须为 1–100000 的整数');
-    const note = typeof a.note === 'string' ? a.note.slice(0, 5000) : '';
-    const photos = [];
-    for (const p of Array.isArray(a.photos) ? a.photos.slice(0, 3) : []) {
-      if (!p || typeof p !== 'object') continue;
-      const storedAs = safeFileName(p.storedAs);
-      if (!storedAs) continue;
-      photos.push({
-        id: typeof p.id === 'string' ? p.id.slice(0, 64) : crypto.randomUUID(),
-        name: typeof p.name === 'string' ? p.name.slice(0, 100) : storedAs,
-        mime: typeof p.mime === 'string' ? p.mime.slice(0, 60) : 'application/octet-stream',
-        size: clampInt(p.size, 0, MAX_PHOTO, 0),
-        storedAs,
-        createdAt: typeof p.createdAt === 'string' ? p.createdAt.slice(0, 40) : new Date().toISOString(),
-      });
-    }
-    result.abilities.push({
-      id,
-      name,
-      cost,
-      unlocked,
-      kind,
-      parentId: kind === 'leaf' && typeof a.parentId === 'string' ? a.parentId : null,
-      prereqIds: Array.isArray(a.prereqIds) ? [...new Set(a.prereqIds.filter(x => typeof x === 'string'))].slice(0, 8) : [],
-      categoryId: null,
-      ox: Number.isFinite(Number(a.ox)) ? Math.round(Number(a.ox)) : 0,
-      oy: Number.isFinite(Number(a.oy)) ? Math.round(Number(a.oy)) : 0,
-      note,
-      photos,
-    });
-  }
-
-  const byId = new Map(result.abilities.map(a => [a.id, a]));
-  const groups = result.abilities.filter(a => a.kind === 'group');
-  const defaultCat = result.categories[0].id;
-
-  // 父子、分类、前置
-  for (const a of result.abilities) {
-    if (a.kind === 'group') {
-      const raw = rawAbilities.find(x => x.id === a.id);
-      const cat = raw && typeof raw.categoryId === 'string' ? raw.categoryId : defaultCat;
-      a.categoryId = catIds.has(cat) ? cat : defaultCat;
-      a.parentId = null;
-      a.prereqIds = [];
-      a.unlocked = false;
-      continue;
-    }
-    if (!a.parentId) fail(400, `知识点「${a.name}」必须挂在能力组下`);
-    const parent = byId.get(a.parentId);
-    if (!parent || parent.kind !== 'group') fail(400, `知识点「${a.name}」的父级不是能力组`);
-    a.categoryId = null;
-    for (const pid of a.prereqIds) {
-      const pre = byId.get(pid);
-      if (!pre || pre.kind !== 'leaf') fail(400, `知识点「${a.name}」的前置不存在或不是知识点`);
-      if (pre.id === a.id) fail(400, `知识点「${a.name}」不能把自己设为前置`);
-      if (pre.parentId !== a.parentId) fail(400, `知识点「${a.name}」的前置必须与它同属一个能力组`);
-    }
-  }
-
-  // 环检测（仅 leaf 前置）
-  const state = new Map();
-  function visit(id, stack) {
-    if (state.get(id) === 2) return;
-    if (state.get(id) === 1) fail(400, `前置关系存在循环：${stack.concat(id).join(' → ')}`);
-    state.set(id, 1);
-    const node = byId.get(id);
-    if (node && node.kind === 'leaf') for (const pid of node.prereqIds) visit(pid, stack.concat(id));
-    state.set(id, 2);
-  }
-  for (const a of result.abilities) if (a.kind === 'leaf') visit(a.id, []);
-
-  // 已点亮节点前置必须全部点亮
-  for (const a of result.abilities) {
-    if (a.kind !== 'leaf' || !a.unlocked) continue;
-    for (const pid of a.prereqIds) {
-      const pre = byId.get(pid);
-      if (!pre || !pre.unlocked) fail(409, `「${a.name}」的前置知识点尚未点亮`);
-    }
-  }
-
-  // 组成本 = 子知识点成本之和
-  for (const g of groups) {
-    g.cost = result.abilities.filter(a => a.kind === 'leaf' && a.parentId === g.id).reduce((s, a) => s + a.cost, 0);
-    g.prereqIds = [];
-  }
-
-  // 文件元数据
-  const rawFiles = Array.isArray(input.files) ? input.files : base.files;
-  if (Array.isArray(rawFiles)) {
-    if (rawFiles.length > 200) fail(400, '文件数量超过上限（200 个）');
-    for (const f of rawFiles) {
-      if (!f || typeof f !== 'object') continue;
-      const local = f.local === true;
-      const storedAs = local ? '' : safeFileName(f.storedAs);
-      if (!local && !storedAs) continue;
-      const nodeId = typeof f.nodeId === 'string' && byId.has(f.nodeId) ? f.nodeId : null;
-      if (!local && !nodeId) continue;
-      result.files.push({
-        id: typeof f.id === 'string' ? f.id.slice(0, 64) : crypto.randomUUID(),
-        nodeId,
-        name: typeof f.name === 'string' ? f.name.slice(0, 100) : (storedAs || '未命名'),
-        mime: typeof f.mime === 'string' ? f.mime.slice(0, 60) : 'application/octet-stream',
-        size: clampInt(f.size, 0, MAX_PHOTO, 0),
-        storedAs,
-        local,
-        createdAt: typeof f.createdAt === 'string' ? f.createdAt.slice(0, 40) : new Date().toISOString(),
-      });
-    }
-  }
-
-  // 任务
-  const rawTasks = Array.isArray(input.tasks) ? input.tasks : base.tasks;
-  if (Array.isArray(rawTasks)) {
-    if (rawTasks.length > 100) fail(400, '任务数量超过上限（100 个）');
-    for (const t of rawTasks) {
-      if (!t || typeof t !== 'object') continue;
-      const name = typeof t.name === 'string' ? t.name.trim() : '';
-      if (!name || name.length > 40) fail(400, '任务名称需为 1–40 个字符');
-      const done = t.done === true;
-      result.tasks.push({
-        id: typeof t.id === 'string' ? t.id.slice(0, 64) : crypto.randomUUID(),
-        name,
-        points: clampInt(t.points, 0, 1000, 0),
-        done,
-        doneAt: done && typeof t.doneAt === 'string' ? t.doneAt.slice(0, 40) : (done ? new Date().toISOString() : null),
-      });
-    }
-  }
-
-  // 课表：仅保留当前周及最近 12 周
-  const rawWeeks = input.timer && input.timer.weeks && typeof input.timer.weeks === 'object'
-    ? input.timer.weeks : base.timer.weeks;
-  const weekKeys = Object.keys(rawWeeks || {}).filter(k => WEEK_RE.test(k)).sort().slice(-12);
-  for (const key of weekKeys) result.timer.weeks[key] = sanitizeWeekTable(rawWeeks[key]);
-  if (!result.timer.weeks[base.week.key]) {
-    result.timer.weeks[base.week.key] = sanitizeWeekTable(base.timer.weeks[base.week.key]);
-  }
-
-  result.timer.bonus = taskBonus(result);
-
-  // 点亮扣点与经验
-  if (charge) {
-    const newly = result.abilities.filter(a => {
-      if (a.kind !== 'leaf' || !a.unlocked) return false;
-      const p = prevById.get(a.id);
-      return p && p.unlocked !== true;
-    });
-    for (const a of newly) {
-      const before = computeMeta(result, now);
-      if (before.available + 1e-9 < a.cost) {
-        fail(409, `科技点不足，点亮「${a.name}」还差 ${Math.max(0, Math.ceil((a.cost - before.available) * 100) / 100)}`);
-      }
-      result.timer.spent += a.cost;
-      result.exp = Math.min(1500, result.exp + a.cost * 10);
-    }
-  }
-
-  const meta = computeMeta(result, now);
-  result.points = meta.available;
-  result.exp = meta.exp;
-  return { tree: result, meta };
+function newId(prefix) {
+  return (prefix || 'x') + Date.now().toString(36) + crypto.randomBytes(4).toString('hex');
 }
 
-// ---------------------------------------------------------------- 鉴权与限速
-
-function scryptHash(password, salt) {
-  return new Promise((resolve, reject) => {
-    crypto.scrypt(password, salt, 64, (err, key) => (err ? reject(err) : resolve(key.toString('hex'))));
-  });
-}
-
-async function verifyPassword(user, password) {
-  const hash = await scryptHash(password, user.salt);
-  return safeEqual(hash, user.hash);
-}
-
-const challenges = new Map();
-
-function parseCookies(req) {
-  const out = {};
-  const header = req.headers.cookie || '';
-  for (const part of header.split(';')) {
-    const i = part.indexOf('=');
-    if (i < 0) continue;
-    const k = part.slice(0, i).trim();
-    const v = part.slice(i + 1).trim();
-    if (k) {
-      try { out[k] = decodeURIComponent(v); } catch { out[k] = v; }
-    }
-  }
-  return out;
-}
-
-function setSessionCookie(res, token) {
-  res.setHeader('Set-Cookie', `grow_session=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${Math.floor(SESSION_MS / 1000)}${SECURE_COOKIE ? '; Secure' : ''}`);
-}
-function clearSessionCookie(res) {
-  res.setHeader('Set-Cookie', `grow_session=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0${SECURE_COOKIE ? '; Secure' : ''}`);
-}
-
-async function currentUser(req) {
-  const token = parseCookies(req).grow_session;
-  if (!token) return null;
-  const session = store.sessions[token];
-  if (!session || session.exp < Date.now()) return null;
-  const user = store.users.find(u => u.id === session.uid);
-  return user || null;
-}
-
-async function requireUser(req) {
-  const user = await currentUser(req);
-  if (!user) fail(401, '请先登录');
-  return user;
-}
-
-async function requireAdmin(req) {
-  const user = await requireUser(req);
-  if (user.role !== 'admin') fail(403, '需要管理员权限');
-  return user;
-}
-
-function userView(user) {
-  return {
-    id: user.id,
-    name: user.name,
-    role: user.name === SUPER_ADMIN ? 'admin' : user.role,
-    createdAt: user.createdAt,
-    lastLoginAt: user.lastLoginAt || null,
-    privacy: { ...user.privacy },
-  };
-}
-
-const limits = new Map();
-function pruneLimit(key) {
-  const entry = limits.get(key);
-  if (!entry) return [];
-  const cutoff = Date.now() - entry.window;
-  const kept = entry.hits.filter(t => t > cutoff);
-  if (kept.length) limits.set(key, { ...entry, hits: kept });
-  else limits.delete(key);
-  return kept;
-}
-function limitExceeded(key, max, windowMs) {
-  return pruneLimit(key).length >= max;
-}
-function limitRecord(key, windowMs) {
-  const entry = limits.get(key) || { window: windowMs, hits: [] };
-  entry.window = windowMs;
-  entry.hits.push(Date.now());
-  limits.set(key, entry);
-}
-function limitClear(key) { limits.delete(key); }
-
-function clientIp(req) {
-  return (req.socket && req.socket.remoteAddress) || 'unknown';
-}
-
-function requireSameOrigin(req) {
-  const origin = req.headers.origin;
-  if (!origin) return;
-  try {
-    const host = req.headers.host;
-    if (!host || new URL(origin).host !== host) fail(403, '跨站请求被拒绝');
-  } catch {
-    fail(403, '跨站请求被拒绝');
-  }
-}
-
-// ---------------------------------------------------------------- HTTP 辅助
-
-function securityHeaders(res) {
-  res.setHeader('X-Content-Type-Options', 'nosniff');
-  res.setHeader('Referrer-Policy', 'no-referrer');
-  res.setHeader('X-Frame-Options', 'DENY');
-  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
-}
-
-function json(res, status, data, headers = {}) {
-  const body = JSON.stringify(data);
-  res.writeHead(status, {
+function sendJson(res, code, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(code, {
     'Content-Type': 'application/json; charset=utf-8',
-    'Cache-Control': 'no-store',
-    ...headers,
+    'Content-Length': Buffer.byteLength(body),
+    'Cache-Control': 'no-store'
   });
   res.end(body);
 }
 
-function sendError(res, error) {
-  if (error instanceof HttpError) return json(res, error.status, { error: error.message });
-  console.error('[server]', error);
-  return json(res, 500, { error: '服务器内部错误' });
+function fail(res, code, message) {
+  sendJson(res, code, { error: message });
 }
 
 function readBody(req, limit = MAX_BODY) {
   return new Promise((resolve, reject) => {
     const chunks = [];
     let size = 0;
-    let done = false;
-    req.on('data', chunk => {
-      if (done) return;
-      size += chunk.length;
-      if (size > limit) {
-        done = true;
-        req.removeAllListeners('data');
-        req.resume();
-        reject(new HttpError(413, '请求体过大'));
-        return;
-      }
-      chunks.push(chunk);
+    req.on('data', (c) => {
+      size += c.length;
+      if (size > limit) { reject(new Error('body-too-large')); req.destroy(); return; }
+      chunks.push(c);
     });
-    req.on('end', () => { if (!done) { done = true; resolve(Buffer.concat(chunks)); } });
-    req.on('error', err => { if (!done) { done = true; reject(err); } });
+    req.on('end', () => resolve(Buffer.concat(chunks)));
+    req.on('error', reject);
   });
 }
 
-async function readJson(req) {
-  const type = (req.headers['content-type'] || '').toLowerCase();
-  if (!type.includes('application/json')) fail(415, '请求必须为 JSON');
-  const buf = await readBody(req);
-  if (!buf.length) return {};
+function safeFileName(name) {
+  let s = String(name || '').replace(/^.*[\\/]/, '');
+  s = s.replace(/[<>:"/\\|?*\u0000-\u001f]/g, '_').trim();
+  s = s.replace(/^\.+/, '');
+  if (!s) s = 'note.txt';
+  if (s.length > 90) {
+    const ext = path.extname(s).slice(0, 10);
+    s = s.slice(0, 90 - ext.length) + ext;
+  }
+  return s;
+}
+
+function extMime(name) {
+  return MIME[path.extname(name).toLowerCase()] || 'application/octet-stream';
+}
+
+async function readJson(file, fallback) {
   try {
-    return JSON.parse(buf.toString('utf8'));
-  } catch {
-    fail(400, 'JSON 格式不正确');
+    return JSON.parse(await fsp.readFile(file, 'utf8'));
+  } catch (e) {
+    return fallback;
   }
 }
 
-// ---------------------------------------------------------------- 好友/蓝图辅助
+/* 按文件串行化写盘：避免并发写同一个文件共用 .tmp 导致 rename 失败 / 互相覆盖 */
+const writeQueues = new Map();
 
-function friendship(a, b) {
-  const rec = store.friends.find(f => (f.a === a && f.b === b) || (f.a === b && f.b === a));
-  return rec || null;
-}
-function areFriends(a, b) {
-  const rec = friendship(a, b);
-  return !!(rec && rec.status === 'accepted');
-}
-function findUser(id) { return store.users.find(u => u.id === id) || null; }
-
-function canViewBlueprint(bp, viewer) {
-  if (!viewer) return false;
-  if (bp.ownerId === viewer.id) return true;
-  if (viewer.role === 'admin') return true;
-  const owner = findUser(bp.ownerId);
-  if (!owner) return false;
-  if (owner.privacy && owner.privacy.bp === false) return bp.visibility === 'public';
-  if (bp.visibility === 'public') return true;
-  if (bp.visibility === 'friends') return areFriends(viewer.id, bp.ownerId);
-  return false;
+function writeJson(file, obj) {
+  const prev = writeQueues.get(file) || Promise.resolve();
+  const next = prev.catch(() => {}).then(async () => {
+    const tmp = file + '.tmp';
+    await fsp.writeFile(tmp, JSON.stringify(obj, null, 2), 'utf8');
+    await fsp.rename(tmp, file);
+  });
+  writeQueues.set(file, next);
+  return next;
 }
 
-function blueprintSummary(bp, viewer) {
+async function ensureDirs() {
+  await fsp.mkdir(USERS_DIR, { recursive: true });
+  await fsp.mkdir(BP_DIR, { recursive: true });
+}
+
+/* ------------------------------------------------------------------ */
+/* 账号与会话                                                          */
+/* ------------------------------------------------------------------ */
+
+let users = [];
+let sessions = {};
+let friends = [];
+let feedback = [];
+let chats = [];
+
+/* 最高权限账号：永远是管理员，不能被取消管理员、不能被删除 */
+const SUPER_ADMIN_NAME = 'protractor45';
+function isSuperAdmin(u) {
+  return !!u && String(u.name || '').toLowerCase() === SUPER_ADMIN_NAME;
+}
+
+async function loadAuth() {
+  users = await readJson(USERS_FILE, []);
+  if (!Array.isArray(users)) users = [];   // 文件被写坏时不至于整个服务起不来
+  sessions = await readJson(SESSIONS_FILE, {});
+  if (!sessions || typeof sessions !== 'object' || Array.isArray(sessions)) sessions = {};
+  friends = await readJson(FRIENDS_FILE, []);
+  if (!Array.isArray(friends)) friends = [];
+  feedback = await readJson(FEEDBACK_FILE, []);
+  if (!Array.isArray(feedback)) feedback = [];
+  chats = await readJson(CHAT_FILE, []);
+  if (!Array.isArray(chats)) chats = [];
+
+  // 保证系统里始终有一个管理员：没有就把最早注册的账号提升为管理员
+  if (!users.some((u) => u.role === 'admin') && users.length) {
+    const first = users.slice().sort((a, b) => (a.createdAt || 0) - (b.createdAt || 0))[0];
+    first.role = 'admin';
+    await writeJson(USERS_FILE, users);
+  }
+  // 最高权限账号：无论文件里写成什么，启动时都拉回管理员
+  const superUser = users.find(isSuperAdmin);
+  if (superUser && superUser.role !== 'admin') {
+    superUser.role = 'admin';
+    await writeJson(USERS_FILE, users);
+  }
+  const now = Date.now();
+  let dirty = false;
+  Object.keys(sessions).forEach((t) => {
+    if (!sessions[t] || sessions[t].exp < now) { delete sessions[t]; dirty = true; }
+  });
+  if (dirty) await writeJson(SESSIONS_FILE, sessions);
+}
+
+/* 异步哈希：scrypt 是 CPU 密集型，同步会阻塞事件循环（登录/注册/改密码时全站卡一下） */
+function hashPassword(password, salt) {
+  return new Promise((resolve, reject) => {
+    crypto.scrypt(password, salt, 64, (err, key) => {
+      if (err) return reject(err);
+      resolve(key.toString('hex'));
+    });
+  });
+}
+
+function findUserByName(name) {
+  const key = String(name || '').trim().toLowerCase();
+  return users.find((u) => u.name.toLowerCase() === key) || null;
+}
+
+function displayNameOf(u) {
+  if (!u) return '';
+  const d = String(u.displayName || '').trim();
+  return d || u.name;
+}
+
+/* 好友可见性：tree 图谱 / timer 时间安排 / bp 蓝图，默认都开放 */
+function normalizePrivacy(raw) {
+  const p = raw && typeof raw === 'object' ? raw : {};
   return {
-    id: bp.id,
-    title: bp.title,
-    note: bp.note,
-    ownerId: bp.ownerId,
-    ownerName: bp.ownerName,
-    category: bp.category,
-    categoryName: bp.categoryName,
-    visibility: bp.visibility,
-    score: bp.score,
-    nodeCount: (bp.nodes || []).length,
-    imageCount: (bp.images || []).length,
-    createdAt: bp.createdAt,
-    updatedAt: bp.updatedAt,
-    mine: viewer ? bp.ownerId === viewer.id : false,
+    tree: p.tree !== false,
+    timer: p.timer !== false,
+    bp: p.bp !== false
   };
 }
 
+function publicUser(u) {
+  if (!u) return null;
+  return {
+    id: u.id,
+    name: u.name,
+    displayName: displayNameOf(u),
+    avatar: typeof u.avatar === 'string' && u.avatar ? u.avatar : '',
+    createdAt: u.createdAt,
+    role: u.role === 'admin' ? 'admin' : 'user',
+    admin: u.role === 'admin',
+    protected: isSuperAdmin(u),
+    privacy: normalizePrivacy(u.privacy)
+  };
+}
+
+function isAdmin(u) {
+  return !!u && u.role === 'admin';
+}
+
+function adminOnly(res, u) {
+  if (isAdmin(u)) return false;
+  fail(res, 403, '只有管理员可以访问');
+  return true;
+}
+
+function linkBetween(x, y) {
+  return friends.find((f) => (f.a === x && f.b === y) || (f.a === y && f.b === x)) || null;
+}
+
+function areFriends(x, y) {
+  const f = linkBetween(x, y);
+  return !!f && f.status !== 'pending';
+}
+
+/* none | out（我发出待同意）| in（对方发来待我同意）| friend */
+function relationOf(x, y) {
+  const f = linkBetween(x, y);
+  if (!f) return 'none';
+  if (f.status === 'pending') return f.a === x ? 'out' : 'in';
+  return 'friend';
+}
+
+function securityHeaders(req, res) {
+  // 每次响应生成一次性 nonce，页面里的内联 <script> 会被打上同一个 nonce，
+  // 这样 CSP 就不需要放开 script-src 'unsafe-inline'（XSS 缓解能力大幅提升）。
+  const nonce = res._cspNonce || '';
+  const https = PUBLIC_MODE || String(req.headers['x-forwarded-proto'] || '').toLowerCase() === 'https';
+
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'geolocation=(), camera=(), microphone=()');
+  res.setHeader('Content-Security-Policy',
+    "default-src 'self'; " +
+    "script-src 'self'" + (nonce ? " 'nonce-" + nonce + "'" : '') + "; " +
+    "style-src 'self' 'unsafe-inline'; " +
+    "img-src 'self' data: blob:; " +
+    "font-src 'self' data:; " +
+    "connect-src 'self'; " +
+    "frame-src 'self' blob:; " +
+    "object-src 'none'; base-uri 'none'; form-action 'self'" +
+    (https ? "; frame-ancestors 'none'" : ''));
+  if (https) {
+    res.setHeader('Strict-Transport-Security', 'max-age=31536000; includeSubDomains');
+    res.setHeader('X-Frame-Options', 'DENY');
+  }
+}
+
+function clientIp(req) {
+  if (PUBLIC_MODE) {
+    const xff = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
+    if (xff) return xff;
+  }
+  const sock = req.socket || {};
+  return String(sock.remoteAddress || 'unknown').replace(/^::ffff:/, '');
+}
+
+/* 登录/注册限速：同一 IP 或同一账号 10 分钟内失败次数过多就临时锁住 */
+const authHits = new Map();
+
+/* 注册验证码暂存：id → { sum, exp } */
+const regChallenges = new Map();
+
+/* 校验并立即作废（一次性） */
+function consumeChallenge(id, answer) {
+  const key = String(id || '');
+  const rec = regChallenges.get(key);
+  if (!rec) return false;
+  regChallenges.delete(key);
+  if (rec.exp < Date.now()) return false;
+  return String(answer == null ? '' : answer).trim() === String(rec.sum);
+}
+
+function hitsKey(key, limit, windowMs) {
+  const now = Date.now();
+  const rec = authHits.get(key);
+  if (!rec || rec.resetAt < now) {
+    authHits.set(key, { n: 1, resetAt: now + windowMs });
+    return false;
+  }
+  rec.n += 1;
+  if (rec.n > limit) {
+    rec.blockUntil = rec.resetAt;
+    return true;
+  }
+  return false;
+}
+
+function hitsBlocked(key) {
+  const rec = authHits.get(key);
+  if (!rec) return 0;
+  if (rec.blockUntil && rec.blockUntil > Date.now()) return Math.ceil((rec.blockUntil - Date.now()) / 60000);
+  return 0;
+}
+
+function clearHits(prefix) {
+  Array.from(authHits.keys()).forEach((k) => { if (k.indexOf(prefix) === 0) authHits.delete(k); });
+}
+
+setInterval(() => {
+  const now = Date.now();
+  Array.from(authHits.keys()).forEach((k) => {
+    const r = authHits.get(k);
+    if (!r || r.resetAt < now) authHits.delete(k);
+  });
+}, 10 * 60 * 1000).unref();
+
+function parseCookies(req) {
+  const out = {};
+  const raw = req.headers.cookie || '';
+  raw.split(';').forEach((part) => {
+    const i = part.indexOf('=');
+    if (i < 0) return;
+    out[part.slice(0, i).trim()] = decodeURIComponent(part.slice(i + 1).trim());
+  });
+  return out;
+}
+
+function currentUser(req) {
+  const token = parseCookies(req).sid;
+  if (!token) return null;
+  const s = sessions[token];
+  if (!s || s.exp < Date.now()) return null;
+  return users.find((u) => u.id === s.uid) || null;
+}
+
+function issueSession(req, res, user) {
+  const token = crypto.randomBytes(24).toString('hex');
+  sessions[token] = { uid: user.id, exp: Date.now() + SESSION_DAYS * 86400000, at: Date.now() };
+  writeJson(SESSIONS_FILE, sessions).catch(() => {});
+  const https = PUBLIC_MODE || String(req.headers['x-forwarded-proto'] || '') === 'https';
+  res.setHeader('Set-Cookie',
+    `sid=${token}; HttpOnly; SameSite=Lax; Path=/; Max-Age=${SESSION_DAYS * 86400}` +
+    (https ? '; Secure' : ''));
+}
+
+/* 清理过期会话，避免 sessions.json 无限膨胀 */
+function pruneSessions() {
+  const now = Date.now();
+  let n = 0;
+  Object.keys(sessions).forEach((t) => {
+    const s = sessions[t];
+    if (!s || !s.exp || s.exp < now) {
+      delete sessions[t];
+      n++;
+    }
+  });
+  if (n) writeJson(SESSIONS_FILE, sessions).catch(() => {});
+  return n;
+}
+
+function userDir(uid) {
+  return path.join(USERS_DIR, uid);
+}
+
+function treePath(uid) {
+  return path.join(userDir(uid), 'tree.json');
+}
+
+function notesDir(uid) {
+  return path.join(userDir(uid), 'notes');
+}
+
+/* 节点描述照片单独放一个目录，和笔记附件分开 */
+function photosDir(uid) {
+  return path.join(userDir(uid), 'photos');
+}
+
+function photoPathFor(uid, storedAs) {
+  const dir = photosDir(uid);
+  const safe = safeFileName(storedAs);
+  const full = path.join(dir, safe);
+  if (path.dirname(full) !== dir) return null;
+  return full;
+}
+
+/* ------------------------------------------------------------------ */
+/* 树数据规范化                                                        */
+/* ------------------------------------------------------------------ */
+
+function normalizeNode(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+  if (!name) return null;
+  const kind = raw.kind === 'group' ? 'group' : 'leaf';
+  let cost = Number(raw.cost);
+  if (!isFinite(cost) || cost < 1) cost = 1;
+  const ox = Number(raw.ox), oy = Number(raw.oy);
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id.slice(0, 64) : 'a' + crypto.randomBytes(4).toString('hex'),
+    name: name.slice(0, 80),
+    cost: kind === 'group' ? 0 : Math.floor(cost),
+    unlocked: raw.unlocked === true,
+    kind: kind,
+    parentId: typeof raw.parentId === 'string' && raw.parentId ? raw.parentId.slice(0, 64) : null,
+    prereqIds: (function () {
+      const src = Array.isArray(raw.prereqIds) ? raw.prereqIds : (raw.prereqId ? [raw.prereqId] : []);
+      const out = [];
+      src.forEach((x) => {
+        if (typeof x !== 'string' || !x) return;
+        const v = x.slice(0, 64);
+        if (out.indexOf(v) < 0) out.push(v);
+      });
+      return out.slice(0, 8);
+    })(),
+    categoryId: typeof raw.categoryId === 'string' && raw.categoryId ? raw.categoryId.slice(0, 64) : null,
+    ox: isFinite(ox) ? Math.round(ox) : 0,
+    oy: isFinite(oy) ? Math.round(oy) : 0,
+    note: typeof raw.note === 'string' ? raw.note.slice(0, 20000) : '',
+    /* 节点描述照片：最多 3 张，文件在 data/users/<uid>/photos/ */
+    photos: (Array.isArray(raw.photos) ? raw.photos : []).slice(0, 3).map((p) => {
+      if (!p || typeof p !== 'object') return null;
+      const nm = typeof p.name === 'string' ? p.name.trim().slice(0, 120) : '';
+      const storedAs = typeof p.storedAs === 'string' ? safeFileName(p.storedAs) : '';
+      if (!nm || !storedAs) return null;
+      return {
+        id: typeof p.id === 'string' && p.id ? p.id.slice(0, 64) : 'ph' + crypto.randomBytes(4).toString('hex'),
+        name: nm,
+        mime: typeof p.mime === 'string' && p.mime ? p.mime.slice(0, 120) : extMime(nm),
+        size: isFinite(Number(p.size)) ? Math.max(0, Math.floor(Number(p.size))) : 0,
+        storedAs: storedAs,
+        createdAt: isFinite(Number(p.createdAt)) ? Math.floor(Number(p.createdAt)) : Date.now()
+      };
+    }).filter(Boolean)
+  };
+}
+
+function normalizeTask(raw) {
+  if (!raw || typeof raw !== 'object') return null;
+  const name = typeof raw.name === 'string' ? raw.name.trim() : '';
+  if (!name) return null;
+  let pts = Number(raw.points);
+  if (!isFinite(pts) || pts < 1) pts = 1;
+  return {
+    id: typeof raw.id === 'string' && raw.id ? raw.id.slice(0, 64) : newId('t'),
+    name: name.slice(0, 60),
+    points: Math.floor(pts),
+    done: raw.done === true,
+    doneAt: isFinite(Number(raw.doneAt)) ? Number(raw.doneAt) : 0
+  };
+}
+
+function sanitizeTimer(raw) {
+  const t = { rate: 50, courses: [], plans: [], spent: 0, bonus: 0, weekKey: '', weeks: {} };
+  if (!raw || typeof raw !== 'object') return t;
+  const rate = Number(raw.rate);
+  t.rate = isFinite(rate) ? Math.max(0, Math.min(100, Math.round(rate))) : 50;
+  const spent = Number(raw.spent), bonus = Number(raw.bonus);
+  t.spent = isFinite(spent) && spent > 0 ? Math.round(spent * 10) / 10 : 0;
+  t.bonus = isFinite(bonus) && bonus > 0 ? Math.round(bonus * 10) / 10 : 0;
+  t.weekKey = typeof raw.weekKey === 'string' ? raw.weekKey.slice(0, 20) : '';
+
+  function sanitizeCourse(c) {
+    if (!c || typeof c !== 'object') return null;
+    const day = Math.round(Number(c.day));
+    const start = Math.round(Number(c.start)), end = Math.round(Number(c.end));
+    if (!(day >= 1 && day <= 7) || !isFinite(start) || !isFinite(end) || end <= start) return null;
+    return {
+      id: typeof c.id === 'string' && c.id ? c.id.slice(0, 64) : newId('c'),
+      day: day, start: start, end: end,
+      title: String(c.title || '').trim().slice(0, 30) || '课程'
+    };
+  }
+  function sanitizePlan(p) {
+    if (!p || typeof p !== 'object') return null;
+    const start = Math.round(Number(p.start)), end = Math.round(Number(p.end));
+    if (!isFinite(start) || !isFinite(end) || end <= start) return null;
+    let days = (Array.isArray(p.days) ? p.days : [])
+      .map((x) => Math.round(Number(x)))
+      .filter((d) => d >= 1 && d <= 7);
+    days = Array.from(new Set(days));
+    if (!days.length) days = [1, 2, 3, 4, 5, 6, 7];
+    return {
+      id: typeof p.id === 'string' && p.id ? p.id.slice(0, 64) : newId('p'),
+      days: days, start: start, end: end,
+      title: String(p.title || '').trim().slice(0, 30) || '安排',
+      break: p.break === true
+    };
+  }
+  function sanitizeSchedule(obj) {
+    const seenC = new Set(), seenP = new Set();
+    const courses = (Array.isArray(obj && obj.courses) ? obj.courses : []).map(sanitizeCourse).filter((c) => {
+      if (!c) return false;
+      const k = c.day + '|' + c.start + '|' + c.end + '|' + c.title;
+      if (seenC.has(k)) return false;
+      seenC.add(k);
+      return true;
+    });
+    const plans = (Array.isArray(obj && obj.plans) ? obj.plans : []).map(sanitizePlan).filter((p) => {
+      if (!p) return false;
+      const k = p.days.slice().sort().join(',') + '|' + p.start + '|' + p.end + '|' + p.title;
+      if (seenP.has(k)) return false;
+      seenP.add(k);
+      return true;
+    });
+    return { courses, plans };
+  }
+
+  // 按周存储的课表（只保留最近 ~一年内的周，防止无限增长）
+  if (raw.weeks && typeof raw.weeks === 'object') {
+    const keys = Object.keys(raw.weeks).filter((k) => /^\d{4}W\d{2}$/.test(k)).sort();
+    keys.slice(-80).forEach((k) => { t.weeks[k] = sanitizeSchedule(raw.weeks[k]); });
+  }
+
+  // 旧结构兼容：顶层 courses/plans 保留（客户端会迁移）
+  (Array.isArray(raw.courses) ? raw.courses : []).forEach((c) => {
+    const clean = sanitizeCourse(c);
+    if (clean) t.courses.push(clean);
+  });
+  (Array.isArray(raw.plans) ? raw.plans : []).forEach((p) => {
+    const clean = sanitizePlan(p);
+    if (clean) t.plans.push(clean);
+  });
+
+  return t;
+}
+
+function sanitizeTree(raw) {
+  const tree = defaultTree();
+  if (!raw || typeof raw !== 'object') return tree;
+
+  const cats = [];
+  const seenCat = new Set();
+  DEFAULT_CATEGORIES.forEach((c) => { cats.push({ id: c.id, name: c.name }); seenCat.add(c.id); });
+  (Array.isArray(raw.categories) ? raw.categories : []).forEach((c) => {
+    if (!c || typeof c !== 'object') return;
+    const id = typeof c.id === 'string' && c.id ? c.id.slice(0, 64) : null;
+    const name = typeof c.name === 'string' ? c.name.trim().slice(0, 24) : '';
+    if (!id || !name || seenCat.has(id)) return;
+    seenCat.add(id);
+    cats.push({ id: id, name: name });
+  });
+  tree.categories = cats;
+  const catIds = new Set(cats.map((c) => c.id));
+
+  const pts = Number(raw.points);
+  tree.points = isFinite(pts) && pts >= 0 ? Math.round(pts * 10) / 10 : INITIAL_POINTS;
+
+  const seen = new Set();
+  const list = [];
+  (Array.isArray(raw.abilities) ? raw.abilities : []).forEach((item) => {
+    const node = normalizeNode(item);
+    if (!node || seen.has(node.id)) return;
+    seen.add(node.id);
+    list.push(node);
+  });
+  if (list.length > MAX_ABILITIES) list.length = MAX_ABILITIES;
+
+  const groupIds = new Set(list.filter((a) => a.kind === 'group').map((a) => a.id));
+  list.forEach((a) => {
+    if (a.kind === 'group') a.parentId = null;
+    else if (a.parentId && !groupIds.has(a.parentId)) a.parentId = null;
+    if (!a.parentId) {
+      if (!a.categoryId || !catIds.has(a.categoryId)) a.categoryId = DEFAULT_CATEGORIES[2].id;
+    } else {
+      a.categoryId = null;
+    }
+  });
+  tree.abilities = list;
+
+  const nodeById = new Map(list.map((a) => [a.id, a]));
+  list.forEach((a) => {
+    a.prereqIds = (a.prereqIds || []).filter((id) => {
+      const p = nodeById.get(id);
+      return !!p && p.kind !== 'group' && p.id !== a.id && (p.parentId || '') === (a.parentId || '');
+    });
+  });
+  /* 断环：某个前置顺着链条能回到自己，就把这条前置去掉 */
+  list.forEach((a) => {
+    a.prereqIds = a.prereqIds.filter((pid) => {
+      const seen = new Set();
+      const stack = [pid];
+      while (stack.length) {
+        const cur = stack.pop();
+        if (cur === a.id) return false;
+        if (seen.has(cur)) continue;
+        seen.add(cur);
+        const n = nodeById.get(cur);
+        if (n && Array.isArray(n.prereqIds)) n.prereqIds.forEach((x) => stack.push(x));
+      }
+      return true;
+    });
+  });
+
+  const files = [];
+  const fileIds = new Set();
+  (Array.isArray(raw.files) ? raw.files : []).forEach((f) => {
+    if (!f || typeof f !== 'object') return;
+    const id = typeof f.id === 'string' && f.id ? f.id.slice(0, 64) : newId('f');
+    if (fileIds.has(id)) return;
+    const nodeId = typeof f.nodeId === 'string' ? f.nodeId : '';
+    if (!nodeId || !seen.has(nodeId)) return;
+    const name = typeof f.name === 'string' && f.name.trim() ? f.name.trim().slice(0, 160) : '';
+    if (!name) return;
+    fileIds.add(id);
+    const isLocal = f.local === true;
+    files.push({
+      id: id,
+      nodeId: nodeId,
+      name: name,
+      mime: typeof f.mime === 'string' && f.mime ? f.mime.slice(0, 120) : extMime(name),
+      size: isFinite(Number(f.size)) ? Math.max(0, Math.floor(Number(f.size))) : 0,
+      storedAs: isLocal ? '' : (typeof f.storedAs === 'string' ? safeFileName(f.storedAs) : ''),
+      local: isLocal,
+      createdAt: isFinite(Number(f.createdAt)) ? Math.floor(Number(f.createdAt)) : Date.now()
+    });
+  });
+  tree.files = files.length > MAX_FILES ? files.slice(0, MAX_FILES) : files;
+
+  const exp = Number(raw.exp);
+  tree.exp = isFinite(exp) ? Math.max(0, Math.min(1500, Math.floor(exp))) : 0;
+
+  const tasks = (Array.isArray(raw.tasks) ? raw.tasks : []).map(normalizeTask).filter(Boolean);
+  tree.tasks = tasks.length > MAX_TASKS ? tasks.slice(0, MAX_TASKS) : tasks;
+  tree.week = (raw.week && typeof raw.week === 'object' && typeof raw.week.key === 'string')
+    ? { key: raw.week.key.slice(0, 20) }
+    : { key: '' };
+  tree.timer = sanitizeTimer(raw.timer);
+
+  return tree;
+}
+
+async function readTree(uid) {
+  try {
+    return sanitizeTree(JSON.parse(await fsp.readFile(treePath(uid), 'utf8')));
+  } catch (e) {
+    return defaultTree();
+  }
+}
+
+async function writeTree(uid, tree) {
+  const clean = sanitizeTree(tree);
+  await fsp.mkdir(notesDir(uid), { recursive: true });
+  await writeJson(treePath(uid), clean);
+  return clean;
+}
+
+function notePathFor(uid, storedAs) {
+  const dir = notesDir(uid);
+  const safe = safeFileName(storedAs);
+  const full = path.join(dir, safe);
+  if (path.dirname(full) !== dir) return null;
+  return full;
+}
+
+/* ------------------------------------------------------------------ */
+/* 蓝图                                                                */
+/* ------------------------------------------------------------------ */
+
+/* 蓝图市场固定四类，和study-tree的分类无关 */
+const BP_CATEGORIES = [
+  { id: 'sport', name: '运动' },
+  { id: 'study', name: '学习' },
+  { id: 'art', name: '艺术' },
+  { id: 'other', name: '其他' }
+];
+const BP_CAT_IDS = BP_CATEGORIES.map((c) => c.id);
+// 蓝图可见性：public 公开 / friends 仅好友可见 / private 私人
+const BP_VISIBILITIES = [
+  { id: 'public', name: '公开' },
+  { id: 'friends', name: '仅好友' },
+  { id: 'private', name: '私人' }
+];
+const BP_VIS_IDS = BP_VISIBILITIES.map((v) => v.id);
+// 试运行阶段默认 0（不拦截）。将来要「高于一定分数才能上架」时设成比如 60。
+const BP_MIN_SCORE = Number(process.env.BP_MIN_SCORE || 0) || 0;
+
+function bpCatName(id) {
+  const c = BP_CATEGORIES.find((x) => x.id === id);
+  return c ? c.name : '其他';
+}
+
+/* 老蓝图没有 category 字段：按名字猜，猜不到归「其他」 */
+function bpCategoryOf(b) {
+  if (b && BP_CAT_IDS.indexOf(b.category) > -1) return b.category;
+  const byName = BP_CATEGORIES.find((c) => c.name === (b && b.categoryName));
+  if (byName) return byName.id;
+  const title = String((b && (b.title + ' ' + b.note)) || '');
+  if (/运动|健身|跑步|游泳|篮球|瑜伽/.test(title)) return 'sport';
+  if (/艺术|绘画|素描|音乐|设计|摄影/.test(title)) return 'art';
+  if (/学习|数学|编程|语言|阅读|算法/.test(title)) return 'study';
+  return 'other';
+}
+
+function bpVisibilityName(id) {
+  const v = BP_VISIBILITIES.find((x) => x.id === id);
+  return v ? v.name : '公开';
+}
+
+/* 当前用户能否看到某份蓝图：自己总是能看；公开所有人；仅好友需是好友；私人只有自己 */
+function canSeeBp(uid, b) {
+  if (!b || b.ownerId === uid) return true;
+  // 主人关掉了「蓝图对好友可见」：除公开蓝图外都不再展示
+  const owner = users.find((u) => u.id === b.ownerId);
+  if (owner && normalizePrivacy(owner.privacy).bp === false) {
+    return (b.visibility || 'public') === 'public';
+  }
+  const vis = b.visibility || 'public';
+  if (vis === 'public') return true;
+  if (vis === 'friends') return areFriends(uid, b.ownerId);
+  return false;
+}
+
+/* 试运行评分：标题 + 说明 + 节点 + 节点笔记 + 附件 五个维度，总分 100 */
 function scoreBlueprint(bp) {
   const title = String(bp.title || '').trim();
   const note = String(bp.note || '').trim();
   const nodes = Array.isArray(bp.nodes) ? bp.nodes : [];
-  const images = Array.isArray(bp.images) ? bp.images : [];
   const files = Array.isArray(bp.files) ? bp.files : [];
-  let score = title.length >= 2 ? 10 : 0;
-  score += Math.min(30, Math.floor(note.length / 3));
-  score += Math.min(15, nodes.length * 3);
-  const noted = nodes.filter(n => String(n.note || '').trim()).length;
-  score += nodes.length ? Math.round((30 * noted) / nodes.length) : 0;
-  score += images.length + files.length > 0 ? 15 : 0;
-  score += nodes.length >= 2 && nodes.length <= 30 ? 5 : 0;
-  return Math.min(100, score);
-}
 
-// ---------------------------------------------------------------- 路由
-
-const routes = [];
-function on(method, pattern, handler) {
-  routes.push({ method, parts: pattern.split('/').filter(Boolean), handler });
-}
-
-// --- 鉴权
-
-on('GET', '/api/auth/challenge', async (req, res) => {
-  const ip = clientIp(req);
-  const key = `challenge:${ip}`;
-  if (limitExceeded(key, 60, 60 * 1000)) fail(429, '验证码请求过于频繁');
-  limitRecord(key, 60 * 1000);
-  const a = crypto.randomInt(2, 20);
-  const b = crypto.randomInt(2, 20);
-  const id = crypto.randomUUID();
-  challenges.set(id, { answer: a + b, exp: Date.now() + 5 * 60 * 1000 });
-  for (const [k, v] of challenges) if (v.exp < Date.now()) challenges.delete(k);
-  json(res, 200, { id, question: `${a} + ${b} = ?`, expiresIn: 300 });
-});
-
-on('POST', '/api/auth/register', async (req, res) => {
-  const ip = clientIp(req);
-  const hourKey = `register:hour:${ip}`;
-  const dayKey = `register:day:${ip}`;
-  if (limitExceeded(hourKey, 5, 60 * 60 * 1000) || limitExceeded(dayKey, 15, 24 * 60 * 60 * 1000)) {
-    fail(429, '注册尝试过于频繁，请稍后再试');
-  }
-  limitRecord(hourKey, 60 * 60 * 1000);
-  limitRecord(dayKey, 24 * 60 * 60 * 1000);
-
-  const body = await readJson(req);
-  const name = typeof body.name === 'string' ? body.name.trim() : '';
-  const password = typeof body.password === 'string' ? body.password : '';
-  const challenge = challenges.get(body.challengeId);
-  if (!challenge || challenge.exp < Date.now()) fail(400, '验证码已过期，请刷新');
-  challenges.delete(body.challengeId);
-  if (Number(body.answer) !== challenge.answer) fail(400, '验证码答案不正确');
-  if (!/^[\w\u4e00-\u9fa5-]{2,20}$/.test(name)) fail(400, '用户名需为 2–20 位中文、字母、数字、下划线或短横线');
-  if (password.length < 8 || password.length > 128) fail(400, '密码长度需为 8–128 位');
-  if (store.users.some(u => u.name.toLowerCase() === name.toLowerCase())) fail(409, '用户名已存在');
-
-  const salt = crypto.randomBytes(16).toString('hex');
-  const hash = await scryptHash(password, salt);
-  const user = {
-    id: crypto.randomUUID(),
-    name,
-    salt,
-    hash,
-    createdAt: new Date().toISOString(),
-    role: name.toLowerCase() === SUPER_ADMIN ? 'admin' : 'user',
-    lastLoginAt: new Date().toISOString(),
-    privacy: { tree: true, timer: true, bp: true },
+  const parts = {
+    title: title.length >= 8 ? 10 : title.length >= 4 ? 8 : title.length >= 2 ? 4 : 0,
+    note: note.length >= 60 ? 30 : note.length >= 30 ? 25 : note.length >= 10 ? 18 : note.length >= 1 ? 8 : 0,
+    nodes: nodes.length >= 4 ? 15 : nodes.length >= 2 ? 10 : nodes.length >= 1 ? 5 : 0,
+    nodeNotes: 0,
+    files: Math.min(15, files.length * 3),
+    size: files.length && (bp.size || 0) > 0 ? 5 : 0
   };
-  store.users.push(user);
-  await saveGlobal('users');
-  await writeTree(user.id, defaultTree());
+  const withNote = nodes.filter((x) => String(x.note || '').trim().length >= 10).length;
+  const totalNoteLen = nodes.reduce((sum, x) => sum + String(x.note || '').trim().length, 0);
+  parts.nodeNotes = Math.min(18, withNote * 6) + Math.min(12, Math.floor(totalNoteLen / 150));
+  const score = Math.min(100, Math.round(Object.values(parts).reduce((sum, v) => sum + v, 0)));
+  return { score: score, parts: parts };
+}
 
-  const token = crypto.randomBytes(32).toString('hex');
-  store.sessions[token] = { uid: user.id, exp: Date.now() + SESSION_MS };
-  await saveGlobal('sessions');
-  setSessionCookie(res, token);
-  json(res, 201, { user: userView(user) });
-});
+function withBpScore(b) {
+  const r = scoreBlueprint(b);
+  return Object.assign({}, b, { score: r.score, scoreParts: r.parts });
+}
 
-on('POST', '/api/auth/login', async (req, res) => {
-  const ip = clientIp(req);
-  const body = await readJson(req);
-  const name = typeof body.name === 'string' ? body.name.trim().toLowerCase() : '';
-  const password = typeof body.password === 'string' ? body.password : '';
-  const ipKey = `login-ip:${ip}`;
-  const accountKey = `login-account:${name}`;
-  if (limitExceeded(ipKey, 20, 10 * 60 * 1000) || limitExceeded(accountKey, 5, 10 * 60 * 1000)) {
-    fail(429, '登录失败次数过多，账号已临时锁定，请 10 分钟后再试');
-  }
-  const user = store.users.find(u => u.name.toLowerCase() === name);
-  const ok = user && password ? await verifyPassword(user, password) : false;
-  if (!ok) {
-    limitRecord(ipKey, 10 * 60 * 1000);
-    limitRecord(accountKey, 10 * 60 * 1000);
-    fail(401, '用户名或密码错误');
-  }
-  limitClear(accountKey);
-  if (user.name === SUPER_ADMIN) user.role = 'admin';
-  user.lastLoginAt = new Date().toISOString();
-  await saveGlobal('users');
-  const token = crypto.randomBytes(32).toString('hex');
-  store.sessions[token] = { uid: user.id, exp: Date.now() + SESSION_MS };
-  await saveGlobal('sessions');
-  setSessionCookie(res, token);
-  json(res, 200, { user: userView(user) });
-});
+function withBpCategory(b) {
+  const category = bpCategoryOf(b);
+  return Object.assign({}, b, { category: category, categoryName: bpCatName(category) });
+}
 
-on('POST', '/api/auth/logout', async (req, res) => {
-  const token = parseCookies(req).grow_session;
-  if (token && store.sessions[token]) {
-    delete store.sessions[token];
-    await saveGlobal('sessions');
-  }
-  clearSessionCookie(res);
-  json(res, 200, { ok: true });
-});
+async function loadBlueprints() {
+  const list = await readJson(BP_FILE, []);
+  return Array.isArray(list) ? list.map(withBpCategory) : [];
+}
 
-on('GET', '/api/auth/me', async (req, res) => {
-  const user = await requireUser(req);
-  json(res, 200, { user: userView(user) });
-});
+async function saveBlueprints(list) {
+  await writeJson(BP_FILE, list);
+}
 
-on('POST', '/api/auth/password', async (req, res) => {
-  const user = await requireUser(req);
-  const body = await readJson(req);
-  const current = typeof body.oldPassword === 'string' ? body.oldPassword : '';
-  const next = typeof body.newPassword === 'string' ? body.newPassword : '';
-  if (!(await verifyPassword(user, current))) fail(403, '当前密码不正确');
-  if (next.length < 8 || next.length > 128) fail(400, '新密码长度需为 8–128 位');
-  user.salt = crypto.randomBytes(16).toString('hex');
-  user.hash = await scryptHash(next, user.salt);
-  const token = parseCookies(req).grow_session;
-  for (const t of Object.keys(store.sessions)) {
-    if (store.sessions[t].uid === user.id && t !== token) delete store.sessions[t];
-  }
-  await saveGlobal('users');
-  await saveGlobal('sessions');
-  json(res, 200, { ok: true });
-});
-
-// --- 用户资料
-
-on('PUT', '/api/users/me', async (req, res) => {
-  const user = await requireUser(req);
-  const body = await readJson(req);
-  if (typeof body.name === 'string') {
-    const name = body.name.trim();
-    if (user.name === SUPER_ADMIN) fail(400, '超级管理员用户名不可修改');
-    if (!/^[\w\u4e00-\u9fa5-]{2,20}$/.test(name)) fail(400, '用户名需为 2–20 位中文、字母、数字、下划线或短横线');
-    if (name.toLowerCase() === SUPER_ADMIN) fail(409, '该用户名已被保留');
-    if (store.users.some(u => u.id !== user.id && u.name.toLowerCase() === name.toLowerCase())) fail(409, '用户名已存在');
-    user.name = name;
-    for (const bp of store.blueprints) if (bp.ownerId === user.id) bp.ownerName = name;
-  }
-  if (body.privacy && typeof body.privacy === 'object') {
-    if (typeof body.privacy.tree === 'boolean') user.privacy.tree = body.privacy.tree;
-    if (typeof body.privacy.timer === 'boolean') user.privacy.timer = body.privacy.timer;
-    if (typeof body.privacy.bp === 'boolean') user.privacy.bp = body.privacy.bp;
-  }
-  await saveGlobal('users');
-  await saveGlobal('blueprints');
-  json(res, 200, { user: userView(user) });
-});
-
-// --- 树
-
-on('GET', '/api/tree', async (req, res) => {
-  const user = await requireUser(req);
-  const data = await withLock(`tree:${user.id}`, async () => {
-    const tree = await readTree(user.id);
-    const reset = ensureWeek(tree, new Date());
-    const meta = computeMeta(tree);
-    tree.points = meta.available;
-    tree.timer.bonus = meta.bonus;
-    if (reset) await writeTree(user.id, tree);
-    return { tree, meta };
-  });
-  json(res, 200, data);
-});
-
-on('PUT', '/api/tree', async (req, res) => {
-  const user = await requireUser(req);
-  const body = await readJson(req);
-  const input = body && body.tree ? body.tree : body;
-  const data = await withLock(`tree:${user.id}`, async () => {
-    const prev = await readTree(user.id);
-    const { tree, meta } = sanitizeTree(input, prev, { charge: true });
-    await writeTree(user.id, tree);
-    await pruneRemovedPhotos(user.id, prev.files, tree.files);
-    return { tree, meta };
-  });
-  json(res, 200, data);
-});
-
-on('POST', '/api/prune', async (req, res) => {
-  const user = await requireUser(req);
-  const data = await withLock(`tree:${user.id}`, async () => {
-    const tree = await readTree(user.id);
-    ensureWeek(tree, new Date());
-    const before = tree.abilities.length;
-    const groupIds = new Set(tree.abilities.filter(a => a.kind === 'group').map(a => a.id));
-    tree.abilities = tree.abilities.filter(a => a.kind === 'group' || (a.parentId && groupIds.has(a.parentId)));
-    const leafIds = new Set(tree.abilities.filter(a => a.kind === 'leaf').map(a => a.id));
-    for (const a of tree.abilities) {
-      if (a.kind === 'leaf') a.prereqIds = (a.prereqIds || []).filter(id => leafIds.has(id) && id !== a.id);
-      else a.prereqIds = [];
-    }
-    // 清理悬空文件/照片引用
-    const prevFiles = tree.files || [];
-    const nodeIds = new Set(tree.abilities.map(a => a.id));
-    tree.files = prevFiles.filter(f => f.local ? !f.nodeId : (f.nodeId && nodeIds.has(f.nodeId)));
-    for (const g of tree.abilities.filter(a => a.kind === 'group')) {
-      g.cost = tree.abilities.filter(a => a.kind === 'leaf' && a.parentId === g.id).reduce((s, a) => s + a.cost, 0);
-    }
-    tree.version = (tree.version || 0) + 1;
-    const meta = computeMeta(tree);
-    tree.points = meta.available;
-    await writeTree(user.id, tree);
-    await pruneRemovedPhotos(user.id, prevFiles, tree.files);
-    return { tree, meta, removed: before - tree.abilities.length };
-  });
-  json(res, 200, data);
-});
-
-// --- 笔记
-
-on('GET', '/api/notes', async (req, res) => {
-  const user = await requireUser(req);
-  const dir = notesDir(user.id);
-  await ensureDir(dir);
-  const names = await fs.promises.readdir(dir).catch(() => []);
-  const items = [];
-  for (const name of names) {
-    if (!safeFileName(name)) continue;
-    const st = await fs.promises.stat(path.join(dir, name)).catch(() => null);
-    if (st && st.isFile()) items.push({ name, size: st.size, updatedAt: st.mtime.toISOString() });
-  }
-  items.sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
-  json(res, 200, { notes: items });
-});
-
-on('POST', '/api/notes', async (req, res) => {
-  const user = await requireUser(req);
-  const url = new URL(req.url, 'http://localhost');
-  let name = safeFileName(url.searchParams.get('name'));
-  let content;
-  const type = (req.headers['content-type'] || '').toLowerCase();
-  if (type.includes('application/json')) {
-    const body = await readJson(req);
-    name = name || safeFileName(body.name);
-    content = typeof body.content === 'string' ? body.content : '';
-  } else {
-    const buf = await readBody(req, MAX_NOTE);
-    content = buf.toString('utf8');
-  }
-  if (!name) fail(400, '文件名不合法');
-  if (!name.toLowerCase().endsWith('.md')) name = `${name}.md`;
-  if (content.length > MAX_NOTE) fail(413, '笔记内容过大');
-  const dir = notesDir(user.id);
-  await ensureDir(dir);
-  const file = path.join(dir, name);
-  if (!file.startsWith(dir + path.sep)) fail(400, '文件名不合法');
-  await fs.promises.writeFile(file, content, 'utf8');
-  json(res, 200, { name, size: Buffer.byteLength(content), updatedAt: new Date().toISOString() });
-});
-
-on('GET', '/api/notes/:name', async (req, res, params) => {
-  const user = await requireUser(req);
-  const name = safeFileName(params.name);
-  if (!name) fail(400, '文件名不合法');
-  const dir = notesDir(user.id);
-  const file = path.join(dir, name);
-  if (!file.startsWith(dir + path.sep)) fail(400, '文件名不合法');
-  const content = await fs.promises.readFile(file, 'utf8').catch(() => null);
-  if (content === null) fail(404, '笔记不存在');
-  res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'Cache-Control': 'no-store' });
-  res.end(content);
-});
-
-on('DELETE', '/api/notes/:name', async (req, res, params) => {
-  const user = await requireUser(req);
-  const name = safeFileName(params.name);
-  if (!name) fail(400, '文件名不合法');
-  const dir = notesDir(user.id);
-  const file = path.join(dir, name);
-  if (!file.startsWith(dir + path.sep)) fail(400, '文件名不合法');
-  const ok = await fs.promises.unlink(file).then(() => true).catch(() => false);
-  if (!ok) fail(404, '笔记不存在');
-  json(res, 200, { ok: true });
-});
-
-// --- 照片
-
-const IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp', 'image/gif']);
-const IMAGE_EXT = { 'image/png': '.png', 'image/jpeg': '.jpg', 'image/webp': '.webp', 'image/gif': '.gif' };
-
-on('POST', '/api/photos', async (req, res) => {
-  const user = await requireUser(req);
-  const url = new URL(req.url, 'http://localhost');
-  const nodeId = url.searchParams.get('nodeId') || '';
-  const display = (url.searchParams.get('name') || 'photo').slice(0, 100);
-  const mime = (req.headers['content-type'] || '').split(';')[0].trim().toLowerCase();
-  if (!IMAGE_TYPES.has(mime)) fail(415, '仅支持 PNG / JPEG / WebP / GIF 图片');
-  const buf = await readBody(req, MAX_PHOTO);
-  if (!buf.length) fail(400, '图片内容为空');
-  const data = await withLock(`tree:${user.id}`, async () => {
-    const tree = await readTree(user.id);
-    ensureWeek(tree, new Date());
-    const node = tree.abilities.find(a => a.id === nodeId);
-    if (!node) fail(404, '目标知识点不存在');
-    if ((node.photos || []).length >= 3) fail(409, '每个知识点最多 3 张照片');
-    const storedAs = `${crypto.randomUUID()}${IMAGE_EXT[mime]}`;
-    const dir = photosDir(user.id);
-    await ensureDir(dir);
-    await fs.promises.writeFile(path.join(dir, storedAs), buf);
-    const photo = {
-      id: crypto.randomUUID(),
-      name: safeFileName(display) || 'photo',
-      mime,
-      size: buf.length,
-      storedAs,
-      createdAt: new Date().toISOString(),
-    };
-    node.photos = node.photos || [];
-    node.photos.push(photo);
-    tree.files = tree.files || [];
-    tree.files.push({
-      id: photo.id, nodeId: node.id, name: photo.name, mime, size: photo.size,
-      storedAs, local: false, createdAt: photo.createdAt,
+function collectSubtree(tree, rootId) {
+  const root = tree.abilities.find((a) => a.id === rootId);
+  if (!root) return null;
+  const ids = new Set([rootId]);
+  let guard = 0, added = 0;
+  do {
+    added = 0;
+    tree.abilities.forEach((a) => {
+      if (a.parentId && ids.has(a.parentId) && !ids.has(a.id)) { ids.add(a.id); added++; }
     });
-    tree.version = (tree.version || 0) + 1;
-    await writeTree(user.id, tree);
-    return { photo, tree };
-  });
-  json(res, 201, { photo: data.photo });
-});
+  } while (added && guard++ < 200);
 
-on('GET', '/api/photos/:name', async (req, res, params) => {
-  const viewer = await requireUser(req);
-  const name = safeFileName(params.name);
-  if (!name) fail(400, '文件名不合法');
-  const ownerIds = [viewer.id];
-  for (const f of store.friends) {
-    if (f.status !== 'accepted') continue;
-    const other = f.a === viewer.id ? f.b : f.b === viewer.id ? f.a : null;
-    if (!other) continue;
-    const owner = findUser(other);
-    if (owner && owner.privacy.tree) ownerIds.push(other);
+  const nodes = tree.abilities.filter((a) => ids.has(a.id));
+  const files = tree.files.filter((f) => ids.has(f.nodeId));
+  return { root, nodes, files };
+}
+
+/* ------------------------------------------------------------------ */
+/* 路由：鉴权                                                          */
+/* ------------------------------------------------------------------ */
+
+async function handleAuth(req, res, url) {
+  const p = url.pathname;
+
+  /* 轻量验证码：一次性算术题（无需第三方服务），5 分钟有效、答过即作废 */
+  if (p === '/api/auth/challenge' && req.method === 'GET') {
+    if (hitsKey('chal:' + clientIp(req), 60, 10 * 60 * 1000)) {
+      return fail(res, 429, '请求太频繁，请稍后再试');
+    }
+    const a = crypto.randomInt(2, 10);
+    const b = crypto.randomInt(2, 10);
+    const id = crypto.randomBytes(8).toString('hex');
+    regChallenges.set(id, { sum: a + b, exp: Date.now() + 5 * 60 * 1000 });
+    if (regChallenges.size > 2000) {
+      const now = Date.now();
+      Array.from(regChallenges.keys()).forEach((k) => {
+        const v = regChallenges.get(k);
+        if (!v || v.exp < now) regChallenges.delete(k);
+      });
+    }
+    return sendJson(res, 200, { id: id, q: a + ' + ' + b + ' = ?' });
   }
-  let found = null;
-  let ownerId = null;
-  for (const uid of ownerIds) {
+
+  if (p === '/api/auth/me' && req.method === 'GET') {
+    const u = currentUser(req);
+    return sendJson(res, 200, { user: publicUser(u) });
+  }
+
+  if (p === '/api/auth/register' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+    catch (e) { return fail(res, 400, '请求格式有误'); }
+
+    const ip = clientIp(req);
+    const rateKey = 'reg:' + ip;
+    const dayKey = 'reg-day:' + ip;
+    const blocked = hitsBlocked(rateKey) || hitsBlocked(dayKey);
+    if (blocked) return fail(res, 429, '注册太频繁，请 ' + blocked + ' 分钟后再试');
+    // 双重限速：同一 IP 每小时 5 次、每天 15 次
+    if (hitsKey(dayKey, 15, 24 * 60 * 60 * 1000)) {
+      return fail(res, 429, '这个地址今天注册次数已达上限，请明天再试');
+    }
+    if (hitsKey(rateKey, 5, 60 * 60 * 1000)) {
+      return fail(res, 429, '注册太频繁，请 1 小时后再试');
+    }
+
+    // 验证码：一次性算术题，缺失或不答对直接拒绝（挡批量注册）
+    if (!consumeChallenge(body.challengeId, body.answer)) {
+      return fail(res, 400, '验证码不正确，请刷新后重新填写');
+    }
+
+    // TT_CLOSE_REGISTER=1：已有账号后关闭注册，只有管理员能建号（公网站点建议开）
+    if (process.env.TT_CLOSE_REGISTER === '1' && users.length > 0) {
+      return fail(res, 403, '本站已关闭自助注册，请联系管理员开通账号');
+    }
+
+    const name = String(body.name || '').trim();
+    const password = String(body.password || '');
+    if (name.length < 2 || name.length > 20) return fail(res, 400, '用户名 2–20 个字符');
+    if (password.length < 8) return fail(res, 400, '密码至少 8 位');
+    if (findUserByName(name)) return fail(res, 409, '这个用户名不可用，换一个试试');
+
+    const salt = crypto.randomBytes(16).toString('hex');
+    const user = {
+      id: newId('u'),
+      name: name,
+      salt: salt,
+      hash: await hashPassword(password, salt),
+      createdAt: Date.now(),
+      role: users.some((u) => u.role === 'admin') ? 'user' : 'admin',
+      lastLoginAt: Date.now()
+    };
+    users.push(user);
+    await writeJson(USERS_FILE, users);
+    await fsp.mkdir(notesDir(user.id), { recursive: true });
+
+    // 第一个账号：把旧的单用户数据搬过来
+    let migrated = 0;
+    if (users.length === 1 && fs.existsSync(LEGACY_TREE)) {
+      try {
+        const legacy = sanitizeTree(JSON.parse(await fsp.readFile(LEGACY_TREE, 'utf8')));
+        if (legacy.abilities.length) {
+          legacy.abilities.forEach((a) => {
+            if (!a.parentId) a.categoryId = a.categoryId || DEFAULT_CATEGORIES[2].id;
+          });
+          await fsp.mkdir(notesDir(user.id), { recursive: true });
+          if (fs.existsSync(LEGACY_NOTES)) {
+            const names = await fsp.readdir(LEGACY_NOTES);
+            for (const n of names) {
+              await fsp.copyFile(path.join(LEGACY_NOTES, n), path.join(notesDir(user.id), n)).catch(() => {});
+            }
+          }
+          await writeTree(user.id, legacy);
+          migrated = legacy.abilities.length;
+          await fsp.rename(LEGACY_TREE, LEGACY_TREE + '.migrated').catch(() => {});
+        }
+      } catch (e) { /* 迁移失败不影响注册 */ }
+    }
+
+    issueSession(req, res, user);
+    return sendJson(res, 200, { user: publicUser(user), migrated: migrated });
+  }
+
+  if (p === '/api/auth/login' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+    catch (e) { return fail(res, 400, '请求格式有误'); }
+
+    const ip = clientIp(req);
+    const nameKey = String(body.name || '').trim().toLowerCase();
+    const ipKey = 'login-ip:' + ip;
+    const userKey = 'login-user:' + ip + ':' + nameKey;
+
+    const waitIp = hitsBlocked(ipKey);
+    if (waitIp) return fail(res, 429, '尝试次数过多，请 ' + waitIp + ' 分钟后再试');
+    const waitUser = hitsBlocked(userKey);
+    if (waitUser) return fail(res, 429, '这个账号尝试次数过多，请 ' + waitUser + ' 分钟后再试');
+
+    const user = findUserByName(body.name);
+    if (!user) {
+      hitsKey(ipKey, 20, 10 * 60 * 1000);
+      hitsKey(userKey, 5, 10 * 60 * 1000);
+      return fail(res, 401, '用户名或密码不对');
+    }
+    const hash = await hashPassword(String(body.password || ''), user.salt);
+    if (hash.length !== user.hash.length || !crypto.timingSafeEqual(Buffer.from(hash), Buffer.from(user.hash))) {
+      const badIp = hitsKey(ipKey, 20, 10 * 60 * 1000);
+      const badUser = hitsKey(userKey, 5, 10 * 60 * 1000);
+      if (badIp || badUser) return fail(res, 429, '密码错误次数过多，账号已临时锁定 10 分钟');
+      return fail(res, 401, '用户名或密码不对');
+    }
+    // 登录成功：清掉这个账号的失败计数
+    clearHits('login-user:' + ip + ':' + nameKey);
+    user.lastLoginAt = Date.now();
+    writeJson(USERS_FILE, users).catch(() => {});
+    issueSession(req, res, user);
+    return sendJson(res, 200, { user: publicUser(user) });
+  }
+
+  if (p === '/api/auth/logout' && req.method === 'POST') {
+    const token = parseCookies(req).sid;
+    if (token && sessions[token]) {
+      delete sessions[token];
+      writeJson(SESSIONS_FILE, sessions).catch(() => {});
+    }
+    res.setHeader('Set-Cookie',
+      'sid=; HttpOnly; SameSite=Lax; Path=/; Max-Age=0' + (PUBLIC_MODE ? '; Secure' : ''));
+    return sendJson(res, 200, { ok: true });
+  }
+
+  /* 修改密码：校验旧密码，改完后注销该用户的其他会话，只保留当前这台设备 */
+  if (p === '/api/auth/password' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+    catch (e) { return fail(res, 400, '请求格式有误'); }
+
+    const oldPass = String(body.oldPassword || '');
+    const newPass = String(body.newPassword || '');
+    if (!oldPass || !newPass) return fail(res, 400, '旧密码和新密码都要填');
+    if (newPass.length < 8) return fail(res, 400, '新密码至少 8 位');
+    if (newPass === oldPass) return fail(res, 400, '新密码不能和旧密码一样');
+
+    const me = currentUser(req);
+    if (!me) return fail(res, 401, '请先登录');
+
+    const oldHash = await hashPassword(oldPass, me.salt);
+    if (oldHash.length !== me.hash.length || !crypto.timingSafeEqual(Buffer.from(oldHash), Buffer.from(me.hash))) {
+      return fail(res, 401, '旧密码不对');
+    }
+
+    const salt = crypto.randomBytes(16).toString('hex');
+    me.salt = salt;
+    me.hash = await hashPassword(newPass, salt);
+    me.passwordChangedAt = Date.now();
+    await writeJson(USERS_FILE, users);
+
+    const curToken = parseCookies(req).sid;
+    let killed = 0;
+    Object.keys(sessions).forEach((t) => {
+      if (sessions[t] && sessions[t].uid === me.id && t !== curToken) {
+        delete sessions[t];
+        killed++;
+      }
+    });
+    if (killed) await writeJson(SESSIONS_FILE, sessions).catch(() => {});
+
+    return sendJson(res, 200, { ok: true, killed: killed });
+  }
+
+  return fail(res, 404, '接口不存在');
+}
+
+/* ------------------------------------------------------------------ */
+/* 路由：业务                                                          */
+/* ------------------------------------------------------------------ */
+
+async function handleApi(req, res, url, user) {
+  const p = url.pathname;
+  const uid = user.id;
+
+  if (p === '/api/users/me' && req.method === 'PUT') {
+    let body;
+    try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+    catch (e) { return fail(res, 400, '请求格式有误'); }
+
+    if (body.displayName !== undefined) {
+      const dn = String(body.displayName || '').trim().slice(0, 20);
+      user.displayName = dn;
+    }
+    if (body.avatar !== undefined) {
+      const av = String(body.avatar || '');
+      if (av && !/^data:image\/(png|jpe?g|gif|webp);base64,/i.test(av)) {
+        return fail(res, 400, '头像格式不正确');
+      }
+      if (av.length > 400000) return fail(res, 400, '头像太大了，请用 256×256 以内的图片');
+      user.avatar = av || '';
+    }
+    if (body.privacy !== undefined) user.privacy = normalizePrivacy(body.privacy);
+    await writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true, user: publicUser(user) });
+  }
+
+  if (p === '/api/tree' && req.method === 'GET') {
+    return sendJson(res, 200, await readTree(uid));
+  }
+
+  if (p === '/api/tree' && req.method === 'PUT') {
+    let body;
+    try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+    catch (e) { return fail(res, 400, '请求内容不是合法的 JSON'); }
+    const clean = await writeTree(uid, body);
+    return sendJson(res, 200, { ok: true, tree: clean });
+  }
+
+  if (p === '/api/prune' && req.method === 'POST') {
     const tree = await readTree(uid);
-    const entry = (tree.files || []).find(x => !x.local && x.storedAs === name);
-    if (entry) { found = entry; ownerId = uid; break; }
-  }
-  if (!found) fail(404, '照片不存在');
-  const file = path.join(photosDir(ownerId), name);
-  const buf = await fs.promises.readFile(file).catch(() => null);
-  if (!buf) fail(404, '照片不存在');
-  res.writeHead(200, {
-    'Content-Type': found.mime || 'application/octet-stream',
-    'Content-Length': buf.length,
-    'Cache-Control': 'private, max-age=3600',
-  });
-  res.end(buf);
-});
-
-on('DELETE', '/api/photos/:name', async (req, res, params) => {
-  const user = await requireUser(req);
-  const name = safeFileName(params.name);
-  if (!name) fail(400, '文件名不合法');
-  const data = await withLock(`tree:${user.id}`, async () => {
-    const tree = await readTree(user.id);
-    const entry = (tree.files || []).find(f => !f.local && f.storedAs === name);
-    if (!entry) fail(404, '照片不存在');
-    for (const a of tree.abilities) {
-      if (Array.isArray(a.photos)) a.photos = a.photos.filter(p => p.storedAs !== name);
-    }
-    tree.files = tree.files.filter(f => f.storedAs !== name);
-    tree.version = (tree.version || 0) + 1;
-    await fs.promises.unlink(path.join(photosDir(user.id), name)).catch(() => {});
-    await writeTree(user.id, tree);
-    return { ok: true };
-  });
-  json(res, 200, data);
-});
-
-// --- 导入导出
-
-on('GET', '/api/export', async (req, res) => {
-  const user = await requireUser(req);
-  const tree = await readTree(user.id);
-  ensureWeek(tree, new Date());
-  res.writeHead(200, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Disposition': `attachment; filename="growth-tree-${user.name}.json"`,
-    'Cache-Control': 'no-store',
-  });
-  res.end(JSON.stringify(tree, null, 2));
-});
-
-on('POST', '/api/import', async (req, res) => {
-  const user = await requireUser(req);
-  const body = await readJson(req);
-  const input = body && body.tree ? body.tree : body;
-  const data = await withLock(`tree:${user.id}`, async () => {
-    const prev = await readTree(user.id);
-    const fresh = defaultTree();
-    const { tree, meta } = sanitizeTree(input, fresh, { charge: false });
-    tree.version = (Number(prev.version) || 0) + 1;
-    tree.timer.spent = Math.max(0, Number(prev.timer.spent) || 0);
-    tree.timer.rate = clampInt(input.timer && input.timer.rate, 0, 100, clampInt(prev.timer.rate, 0, 100, 50));
-    const nextMeta = computeMeta(tree);
-    tree.points = nextMeta.available;
-    await writeTree(user.id, tree);
-    return { tree, meta: nextMeta };
-  });
-  json(res, 200, data);
-});
-
-// --- 蓝图
-
-on('GET', '/api/blueprints', async (req, res) => {
-  const viewer = await requireUser(req);
-  const url = new URL(req.url, 'http://localhost');
-  const category = (url.searchParams.get('category') || '').trim();
-  const q = (url.searchParams.get('q') || '').trim().toLowerCase();
-  const ownerFilter = url.searchParams.get('owner') || '';
-  let list = store.blueprints.filter(bp => canViewBlueprint(bp, viewer));
-  if (category) list = list.filter(bp => bp.category === category || bp.categoryName === category);
-  if (ownerFilter) list = list.filter(bp => bp.ownerId === ownerFilter || bp.ownerName.toLowerCase() === ownerFilter.toLowerCase());
-  if (q) list = list.filter(bp => `${bp.title} ${bp.note} ${bp.ownerName}`.toLowerCase().includes(q));
-  list.sort((a, b) => String(b.updatedAt).localeCompare(String(a.updatedAt)));
-  json(res, 200, { blueprints: list.slice(0, 100).map(bp => blueprintSummary(bp, viewer)) });
-});
-
-on('POST', '/api/blueprints', async (req, res) => {
-  const user = await requireUser(req);
-  const body = await readJson(req);
-  const title = typeof body.title === 'string' ? body.title.trim() : '';
-  const note = typeof body.note === 'string' ? body.note.slice(0, 5000) : '';
-  const visibility = ['public', 'friends', 'private'].includes(body.visibility) ? body.visibility : 'private';
-  if (title.length < 2 || title.length > 60) fail(400, '蓝图标题需为 2–60 个字符');
-  if (store.blueprints.filter(b => b.ownerId === user.id).length >= 50) fail(409, '每个用户最多发布 50 份蓝图');
-  const data = await withLock(`tree:${user.id}`, async () => {
-    const tree = await readTree(user.id);
-    ensureWeek(tree, new Date());
-    const selectedIds = Array.isArray(body.nodeIds) ? new Set(body.nodeIds.filter(x => typeof x === 'string')) : null;
-    let nodes = tree.abilities.filter(a => !selectedIds || selectedIds.has(a.id));
-    if (!nodes.length) fail(400, '请选择至少一个节点');
-    // 补全叶子节点的父组
-    const ids = new Set(nodes.map(n => n.id));
-    for (const leaf of nodes.filter(n => n.kind === 'leaf')) {
-      if (leaf.parentId && !ids.has(leaf.parentId)) {
-        const g = tree.abilities.find(a => a.id === leaf.parentId);
-        if (g) { nodes.push(g); ids.add(g.id); }
+    const keep = new Set(tree.files.map((f) => safeFileName(f.storedAs)).filter(Boolean));
+    let removed = 0;
+    try {
+      const names = await fsp.readdir(notesDir(uid));
+      for (const n of names) {
+        if (keep.has(n)) continue;
+        await fsp.unlink(path.join(notesDir(uid), n)).catch(() => {});
+        removed++;
       }
+    } catch (e) { /* 目录还不存在 */ }
+    return sendJson(res, 200, { ok: true, removed: removed });
+  }
+
+  if (p === '/api/notes' && req.method === 'POST') {
+    const name = safeFileName(url.searchParams.get('name') || '');
+    const nodeId = (url.searchParams.get('nodeId') || '').slice(0, 64);
+    if (!nodeId) return fail(res, 400, '缺少 nodeId');
+    if (!/\.(md|markdown|pdf|txt|doc|docx|ppt|pptx|png|jpe?g|gif|webp|bmp)$/i.test(name)) {
+      return fail(res, 400, '不支持这个文件类型');
     }
-    if (nodes.length > 300) nodes = nodes.slice(0, 300);
-    const group = nodes.find(n => n.kind === 'group') || null;
-    const cat = group ? tree.categories.find(c => c.id === group.categoryId) : tree.categories[0];
-    const id = crypto.randomUUID();
-    const dir = blueprintDir(id);
-    await ensureDir(path.join(dir, 'images'));
-    await ensureDir(path.join(dir, 'files'));
-    const images = [];
-    const files = [];
-    for (const node of nodes) {
-      for (const p of node.photos || []) {
-        const src = path.join(photosDir(user.id), p.storedAs);
-        if (!fs.existsSync(src)) continue;
-        const ext = path.extname(p.storedAs) || '';
-        const storedAs = `${crypto.randomUUID()}${ext}`;
-        await fs.promises.copyFile(src, path.join(dir, 'images', storedAs));
-        images.push({ id: crypto.randomUUID(), nodeId: node.id, name: p.name, mime: p.mime, size: p.size, storedAs, createdAt: new Date().toISOString() });
+
+    const buf = await readBody(req);
+    if (!buf.length) return fail(res, 400, '文件是空的');
+
+    const id = newId('f');
+    const storedAs = `${id}-${name}`;
+    await fsp.mkdir(notesDir(uid), { recursive: true });
+    await fsp.writeFile(path.join(notesDir(uid), storedAs), buf);
+
+    return sendJson(res, 201, {
+      ok: true,
+      file: {
+        id: id, nodeId: nodeId, name: name,
+        mime: extMime(name),
+        size: buf.length, storedAs: storedAs, createdAt: Date.now()
       }
-      for (const f of (tree.files || [])) {
-        if (f.nodeId !== node.id || f.local || !f.storedAs) continue;
-        if (images.some(i => i.storedAs === f.storedAs)) continue;
-        files.push({ id: f.id, nodeId: f.nodeId, name: f.name, mime: f.mime, size: f.size });
-      }
-    }
-    const bp = {
-      id,
-      title,
-      note,
-      ownerId: user.id,
-      ownerName: user.name,
-      category: cat ? cat.id : 'cat_study',
-      categoryName: cat ? cat.name : '学习',
-      visibility,
-      nodes: nodes.map(n => ({ ...clone(n), sourceId: n.id, categoryName: n.kind === 'group' ? (cat ? cat.name : '学习') : null })),
-      files,
-      images,
-      score: 0,
-      createdAt: new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
-    };
-    bp.score = scoreBlueprint(bp);
-    store.blueprints.push(bp);
-    await saveGlobal('blueprints');
-    await writeJsonFile(path.join(dir, 'blueprint.json'), bp);
-    return bp;
-  });
-  json(res, 201, { blueprint: blueprintSummary(data, user) });
-});
-
-on('GET', '/api/blueprints/:id', async (req, res, params) => {
-  const viewer = await requireUser(req);
-  const bp = store.blueprints.find(b => b.id === params.id);
-  if (!bp) fail(404, '蓝图不存在');
-  if (!canViewBlueprint(bp, viewer)) fail(403, '无权查看该蓝图');
-  json(res, 200, { blueprint: bp, mine: bp.ownerId === viewer.id, canManage: bp.ownerId === viewer.id || viewer.role === 'admin' });
-});
-
-on('PUT', '/api/blueprints/:id', async (req, res, params) => {
-  const user = await requireUser(req);
-  const bp = store.blueprints.find(b => b.id === params.id);
-  if (!bp) fail(404, '蓝图不存在');
-  if (bp.ownerId !== user.id && user.role !== 'admin') fail(403, '无权修改该蓝图');
-  const body = await readJson(req);
-  if (typeof body.title === 'string') {
-    const title = body.title.trim();
-    if (title.length < 2 || title.length > 60) fail(400, '蓝图标题需为 2–60 个字符');
-    bp.title = title;
-  }
-  if (typeof body.note === 'string') bp.note = body.note.slice(0, 5000);
-  if (['public', 'friends', 'private'].includes(body.visibility)) bp.visibility = body.visibility;
-  bp.score = scoreBlueprint(bp);
-  bp.updatedAt = new Date().toISOString();
-  await saveGlobal('blueprints');
-  await writeJsonFile(path.join(blueprintDir(bp.id), 'blueprint.json'), bp);
-  json(res, 200, { blueprint: blueprintSummary(bp, user) });
-});
-
-on('DELETE', '/api/blueprints/:id', async (req, res, params) => {
-  const user = await requireUser(req);
-  const bp = store.blueprints.find(b => b.id === params.id);
-  if (!bp) fail(404, '蓝图不存在');
-  if (bp.ownerId !== user.id && user.role !== 'admin') fail(403, '无权删除该蓝图');
-  store.blueprints = store.blueprints.filter(b => b.id !== bp.id);
-  await saveGlobal('blueprints');
-  await fs.promises.rm(blueprintDir(bp.id), { recursive: true, force: true });
-  json(res, 200, { ok: true });
-});
-
-on('POST', '/api/blueprints/:id/import', async (req, res, params) => {
-  const user = await requireUser(req);
-  const bp = store.blueprints.find(b => b.id === params.id);
-  if (!bp) fail(404, '蓝图不存在');
-  if (!canViewBlueprint(bp, user)) fail(403, '无权导入该蓝图');
-
-  const data = await withLock(`tree:${user.id}`, async () => {
-    const tree = await readTree(user.id);
-    ensureWeek(tree, new Date());
-    const sourceNodes = Array.isArray(bp.nodes) ? bp.nodes : [];
-    const sourceIds = new Set(sourceNodes.map(n => n.id));
-    const groups = sourceNodes.filter(n => n.kind === 'group');
-    const leaves = sourceNodes.filter(n => n.kind === 'leaf' && n.parentId && sourceIds.has(n.parentId));
-    const kept = [...groups, ...leaves];
-    if (!kept.length) fail(400, '蓝图没有可导入的完整子树');
-    if (tree.abilities.length + kept.length > 300) fail(409, '导入后节点数量将超过上限（300 个）');
-
-    const idMap = new Map();
-    for (const n of kept) idMap.set(n.id, crypto.randomUUID());
-
-    // 分类：按蓝图里的 categoryName 复用或新建
-    const existingCats = new Map(tree.categories.map(c => [c.name.toLowerCase(), c]));
-    const catMap = new Map();
-    for (const g of groups) {
-      const name = typeof g.categoryName === 'string' && g.categoryName.trim() ? g.categoryName.trim() : (bp.categoryName || '学习');
-      const found = existingCats.get(name.toLowerCase());
-      if (found) { catMap.set(g.id, found.id); continue; }
-      if (tree.categories.length >= 20) { catMap.set(g.id, tree.categories[0] ? tree.categories[0].id : 'cat_study'); continue; }
-      const cat = { id: `cat_${crypto.randomUUID().replace(/-/g, '').slice(0, 10)}`, name: name.slice(0, 30) };
-      tree.categories.push(cat);
-      existingCats.set(cat.name.toLowerCase(), cat);
-      catMap.set(g.id, cat.id);
-    }
-
-    const usedNames = new Set(tree.abilities.map(a => a.name.toLowerCase()));
-    function uniqueName(name) {
-      let base = String(name || '导入节点').slice(0, 40);
-      let candidate = base;
-      let n = 2;
-      while (usedNames.has(candidate.toLowerCase())) {
-        const suffix = ` ${n++}`;
-        candidate = base.slice(0, 40 - suffix.length) + suffix;
-      }
-      usedNames.add(candidate.toLowerCase());
-      return candidate;
-    }
-
-    const added = [];
-    for (const g of groups) {
-      added.push({
-        id: idMap.get(g.id),
-        name: uniqueName(g.name),
-        cost: 0,
-        unlocked: false,
-        kind: 'group',
-        parentId: null,
-        prereqIds: [],
-        categoryId: catMap.get(g.id) || tree.categories[0].id,
-        ox: 0, oy: 0,
-        note: typeof g.note === 'string' ? g.note.slice(0, 5000) : (typeof bp.note === 'string' ? bp.note.slice(0, 5000) : ''),
-        photos: [],
-      });
-    }
-    for (const leaf of leaves) {
-      const parentId = idMap.get(leaf.parentId);
-      if (!parentId) continue;
-      added.push({
-        id: idMap.get(leaf.id),
-        name: uniqueName(leaf.name),
-        cost: clampInt(leaf.cost, 1, 100000, 1),
-        unlocked: false,
-        kind: 'leaf',
-        parentId,
-        prereqIds: (leaf.prereqIds || []).filter(pid => idMap.has(pid)).map(pid => idMap.get(pid)),
-        categoryId: null,
-        ox: Number.isFinite(Number(leaf.ox)) ? Number(leaf.ox) : 0,
-        oy: Number.isFinite(Number(leaf.oy)) ? Number(leaf.oy) : 0,
-        note: typeof leaf.note === 'string' ? leaf.note.slice(0, 5000) : '',
-        photos: [],
-      });
-    }
-
-    // 导入蓝图图片到自己的照片目录
-    tree.files = tree.files || [];
-    const dir = blueprintDir(bp.id);
-    for (const img of bp.images || []) {
-      const mappedNode = idMap.get(img.nodeId);
-      if (!mappedNode) continue;
-      const node = added.find(a => a.id === mappedNode);
-      if (!node || node.photos.length >= 3) continue;
-      const storedAs = safeFileName(img.storedAs);
-      if (!storedAs) continue;
-      const src = path.join(dir, 'images', storedAs);
-      if (!fs.existsSync(src)) continue;
-      const ext = path.extname(storedAs) || '';
-      const newStored = `${crypto.randomUUID()}${ext}`;
-      const target = photosDir(user.id);
-      await ensureDir(target);
-      await fs.promises.copyFile(src, path.join(target, newStored));
-      node.photos.push({
-        id: crypto.randomUUID(),
-        name: img.name || '蓝图图片',
-        mime: img.mime || 'application/octet-stream',
-        size: img.size || 0,
-        storedAs: newStored,
-        createdAt: new Date().toISOString(),
-      });
-      tree.files.push({
-        id: crypto.randomUUID(), nodeId: node.id, name: img.name || '蓝图图片',
-        mime: img.mime || 'application/octet-stream', size: img.size || 0,
-        storedAs: newStored, local: false, createdAt: new Date().toISOString(),
-      });
-    }
-
-    tree.abilities.push(...added);
-    for (const g of tree.abilities.filter(a => a.kind === 'group')) {
-      g.cost = tree.abilities.filter(a => a.kind === 'leaf' && a.parentId === g.id).reduce((s, a) => s + a.cost, 0);
-    }
-    tree.version = (tree.version || 0) + 1;
-    const meta = computeMeta(tree);
-    tree.points = meta.available;
-    await writeTree(user.id, tree);
-    return { tree, meta, imported: added.length };
-  });
-  json(res, 200, data);
-});
-
-on('POST', '/api/blueprints/:id/refresh', async (req, res, params) => {
-  const user = await requireUser(req);
-  const bp = store.blueprints.find(b => b.id === params.id);
-  if (!bp) fail(404, '蓝图不存在');
-  if (bp.ownerId !== user.id) fail(403, '只有主人可以刷新蓝图');
-  const tree = await readTree(user.id);
-  ensureWeek(tree, new Date());
-  const dir = blueprintDir(bp.id);
-  const imagesDir = path.join(dir, 'images');
-  await fs.promises.rm(imagesDir, { recursive: true, force: true });
-  await ensureDir(imagesDir);
-  await ensureDir(path.join(dir, 'files'));
-  const nodes = [];
-  const images = [];
-  const files = [];
-  for (const old of bp.nodes || []) {
-    const sourceId = old.sourceId || old.id;
-    const current = tree.abilities.find(a => a.id === sourceId);
-    if (!current) continue;
-    nodes.push({ ...clone(current), sourceId, categoryName: current.kind === 'group' ? (bp.categoryName || '') : null });
-    for (const p of current.photos || []) {
-      const src = path.join(photosDir(user.id), p.storedAs);
-      if (!fs.existsSync(src)) continue;
-      const ext = path.extname(p.storedAs) || '';
-      const storedAs = `${crypto.randomUUID()}${ext}`;
-      await fs.promises.copyFile(src, path.join(imagesDir, storedAs));
-      images.push({ id: crypto.randomUUID(), nodeId: current.id, name: p.name, mime: p.mime, size: p.size, storedAs, createdAt: new Date().toISOString() });
-    }
-  }
-  for (const f of tree.files || []) {
-    if (f.local || !f.storedAs) continue;
-    if (!nodes.some(n => n.id === f.nodeId)) continue;
-    files.push({ id: f.id, nodeId: f.nodeId, name: f.name, mime: f.mime, size: f.size });
-  }
-  bp.nodes = nodes;
-  bp.images = images;
-  bp.files = files;
-  bp.updatedAt = new Date().toISOString();
-  bp.score = scoreBlueprint(bp);
-  await saveGlobal('blueprints');
-  await writeJsonFile(path.join(dir, 'blueprint.json'), bp);
-  json(res, 200, { blueprint: bp });
-});
-
-on('GET', '/api/blueprints/:id/images/:img', async (req, res, params) => {
-  const viewer = await requireUser(req);
-  const bp = store.blueprints.find(b => b.id === params.id);
-  if (!bp) fail(404, '蓝图不存在');
-  if (!canViewBlueprint(bp, viewer)) fail(403, '无权查看该蓝图');
-  const name = safeFileName(params.img);
-  if (!name) fail(400, '文件名不合法');
-  const image = (bp.images || []).find(i => i.storedAs === name);
-  if (!image) fail(404, '图片不存在');
-  const file = path.join(blueprintDir(bp.id), 'images', name);
-  const buf = await fs.promises.readFile(file).catch(() => null);
-  if (!buf) fail(404, '图片不存在');
-  res.writeHead(200, {
-    'Content-Type': image.mime || 'application/octet-stream',
-    'Content-Length': buf.length,
-    'Cache-Control': 'private, max-age=3600',
-  });
-  res.end(buf);
-});
-
-// --- 社交
-
-on('GET', '/api/users', async (req, res) => {
-  const user = await requireUser(req);
-  const key = `search:${user.id}`;
-  if (limitExceeded(key, 20, 60 * 1000)) fail(429, '搜索过于频繁');
-  limitRecord(key, 60 * 1000);
-  const url = new URL(req.url, 'http://localhost');
-  const q = (url.searchParams.get('q') || '').trim();
-  if (q.length < 2) fail(400, '搜索词至少 2 个字符');
-  const lower = q.toLowerCase();
-  const results = store.users
-    .filter(u => u.id !== user.id && u.name.toLowerCase().includes(lower))
-    .slice(0, 12)
-    .map(u => ({ id: u.id, name: u.name, role: u.name === SUPER_ADMIN ? 'admin' : u.role, isFriend: areFriends(user.id, u.id) }));
-  json(res, 200, { users: results });
-});
-
-on('GET', '/api/friends', async (req, res) => {
-  const user = await requireUser(req);
-  const friends = [];
-  const incoming = [];
-  const outgoing = [];
-  for (const f of store.friends) {
-    if (f.a !== user.id && f.b !== user.id) continue;
-    const otherId = f.a === user.id ? f.b : f.a;
-    const other = findUser(otherId);
-    if (!other) continue;
-    const item = { id: other.id, name: other.name, createdAt: f.createdAt };
-    if (f.status === 'accepted') friends.push(item);
-    else if (f.a === user.id) outgoing.push(item);
-    else incoming.push(item);
-  }
-  json(res, 200, { friends, incoming, outgoing });
-});
-
-on('POST', '/api/friends', async (req, res) => {
-  const user = await requireUser(req);
-  const body = await readJson(req);
-  const targetId = typeof body.uid === 'string' ? body.uid : '';
-  const target = findUser(targetId);
-  if (!target) fail(404, '用户不存在');
-  if (target.id === user.id) fail(400, '不能添加自己为好友');
-  const existing = friendship(user.id, target.id);
-  if (existing) {
-    if (existing.status === 'accepted') fail(409, '你们已经是好友');
-    if (existing.a === target.id) {
-      existing.status = 'accepted';
-      await saveGlobal('friends');
-      return json(res, 200, { ok: true, accepted: true });
-    }
-    fail(409, '好友申请已发送，请等待对方处理');
-  }
-  store.friends.push({ a: user.id, b: target.id, status: 'pending', createdAt: new Date().toISOString() });
-  await saveGlobal('friends');
-  json(res, 201, { ok: true });
-});
-
-on('POST', '/api/friends/:id/accept', async (req, res, params) => {
-  const user = await requireUser(req);
-  const rec = store.friends.find(f => f.a === params.id && f.b === user.id && f.status === 'pending');
-  if (!rec) fail(404, '没有找到该好友申请');
-  rec.status = 'accepted';
-  await saveGlobal('friends');
-  json(res, 200, { ok: true });
-});
-
-on('POST', '/api/friends/:id/reject', async (req, res, params) => {
-  const user = await requireUser(req);
-  const idx = store.friends.findIndex(f => f.a === params.id && f.b === user.id && f.status === 'pending');
-  if (idx < 0) fail(404, '没有找到该好友申请');
-  store.friends.splice(idx, 1);
-  await saveGlobal('friends');
-  json(res, 200, { ok: true });
-});
-
-on('DELETE', '/api/friends/:id', async (req, res, params) => {
-  const user = await requireUser(req);
-  const before = store.friends.length;
-  store.friends = store.friends.filter(f => !((f.a === user.id && f.b === params.id) || (f.b === user.id && f.a === params.id)));
-  if (store.friends.length === before) fail(404, '好友关系不存在');
-  await saveGlobal('friends');
-  json(res, 200, { ok: true });
-});
-
-on('GET', '/api/chat/:id', async (req, res, params) => {
-  const user = await requireUser(req);
-  const other = findUser(params.id);
-  if (!other) fail(404, '用户不存在');
-  if (!areFriends(user.id, other.id)) fail(403, '只能和好友聊天');
-  const chat = store.chats.find(c => (c.a === user.id && c.b === other.id) || (c.a === other.id && c.b === user.id));
-  json(res, 200, { messages: chat ? chat.messages.slice(-500) : [], peer: { id: other.id, name: other.name } });
-});
-
-on('POST', '/api/chat/:id', async (req, res, params) => {
-  const user = await requireUser(req);
-  const other = findUser(params.id);
-  if (!other) fail(404, '用户不存在');
-  if (!areFriends(user.id, other.id)) fail(403, '只能和好友聊天');
-  const body = await readJson(req);
-  const text = typeof body.text === 'string' ? body.text.trim() : '';
-  if (!text || text.length > 1000) fail(400, '消息长度需为 1–1000 个字符');
-  let chat = store.chats.find(c => (c.a === user.id && c.b === other.id) || (c.a === other.id && c.b === user.id));
-  if (!chat) {
-    chat = { a: user.id, b: other.id, messages: [] };
-    store.chats.push(chat);
-  }
-  const message = { from: user.id, text, at: new Date().toISOString() };
-  chat.messages.push(message);
-  if (chat.messages.length > 1000) chat.messages = chat.messages.slice(-1000);
-  await saveGlobal('chats');
-  json(res, 201, { message });
-});
-
-on('GET', '/api/users/:id/tree', async (req, res, params) => {
-  const viewer = await requireUser(req);
-  const target = findUser(params.id);
-  if (!target) fail(404, '用户不存在');
-  const isSelf = viewer.id === target.id;
-  if (!isSelf && viewer.role !== 'admin') {
-    if (!areFriends(viewer.id, target.id)) fail(403, '只能查看好友的树');
-    if (!target.privacy.tree) fail(403, '对方已关闭树查看权限');
-  }
-  const data = await withLock(`tree:${target.id}`, async () => {
-    const tree = await readTree(target.id);
-    ensureWeek(tree, new Date());
-    const meta = computeMeta(tree);
-    if (!isSelf && !target.privacy.timer) {
-      tree.timer = { rate: 0, spent: 0, bonus: 0, weekKey: tree.week.key, weeks: { [tree.week.key]: { courses: [], plans: [] } } };
-    }
-    return { tree, meta: isSelf || target.privacy.timer ? meta : { ...meta, available: 0, remainingMinutes: 0, totalFreeMinutes: 0, bonus: 0, used: 0 } };
-  });
-  json(res, 200, { ...data, user: { id: target.id, name: target.name }, readOnly: true });
-});
-
-// --- 反馈
-
-on('GET', '/api/feedback', async (req, res) => {
-  const user = await requireUser(req);
-  const isAdmin = user.role === 'admin';
-  const list = store.feedback
-    .filter(f => isAdmin || f.uid === user.id)
-    .sort((a, b) => String(b.createdAt).localeCompare(String(a.createdAt)))
-    .slice(0, 200);
-  json(res, 200, { feedback: list });
-});
-
-on('POST', '/api/feedback', async (req, res) => {
-  const user = await requireUser(req);
-  const key = `feedback:${user.id}`;
-  if (limitExceeded(key, 10, 60 * 60 * 1000)) fail(429, '反馈提交过于频繁');
-  const body = await readJson(req);
-  const text = typeof body.text === 'string' ? body.text.trim() : '';
-  if (!text || text.length > 2000) fail(400, '反馈内容需为 1–2000 个字符');
-  limitRecord(key, 60 * 60 * 1000);
-  const item = {
-    id: crypto.randomUUID(),
-    uid: user.id,
-    name: user.name,
-    text,
-    createdAt: new Date().toISOString(),
-    replies: [],
-  };
-  store.feedback.unshift(item);
-  await saveGlobal('feedback');
-  json(res, 201, { feedback: item });
-});
-
-on('POST', '/api/feedback/:id/reply', async (req, res, params) => {
-  const user = await requireUser(req);
-  const item = store.feedback.find(f => f.id === params.id);
-  if (!item) fail(404, '反馈不存在');
-  if (user.role !== 'admin' && item.uid !== user.id) fail(403, '无权回复该反馈');
-  const body = await readJson(req);
-  const text = typeof body.text === 'string' ? body.text.trim() : '';
-  if (!text || text.length > 2000) fail(400, '回复内容需为 1–2000 个字符');
-  item.replies.push({ id: crypto.randomUUID(), uid: user.id, name: user.name, text, createdAt: new Date().toISOString() });
-  await saveGlobal('feedback');
-  json(res, 200, { feedback: item });
-});
-
-on('DELETE', '/api/feedback/:id', async (req, res, params) => {
-  const user = await requireUser(req);
-  const item = store.feedback.find(f => f.id === params.id);
-  if (!item) fail(404, '反馈不存在');
-  if (user.role !== 'admin' && item.uid !== user.id) fail(403, '无权删除该反馈');
-  store.feedback = store.feedback.filter(f => f.id !== item.id);
-  await saveGlobal('feedback');
-  json(res, 200, { ok: true });
-});
-
-// --- 管理
-
-on('GET', '/api/admin/users', async (req, res) => {
-  await requireAdmin(req);
-  const users = [];
-  for (const u of store.users) {
-    const tree = await readTree(u.id);
-    users.push({
-      ...userView(u),
-      abilityCount: (tree.abilities || []).length,
-      blueprintCount: store.blueprints.filter(b => b.ownerId === u.id).length,
-      superAdmin: u.name === SUPER_ADMIN,
     });
   }
-  users.sort((a, b) => String(a.createdAt).localeCompare(String(b.createdAt)));
-  json(res, 200, { users });
-});
 
-on('GET', '/api/admin/users/:id/blueprints', async (req, res, params) => {
-  const admin = await requireAdmin(req);
-  const target = findUser(params.id);
-  if (!target) fail(404, '用户不存在');
-  const list = store.blueprints.filter(b => b.ownerId === target.id).map(b => blueprintSummary(b, admin));
-  json(res, 200, { blueprints: list });
-});
+  const noteMatch = p.match(/^\/api\/notes\/(.+)$/);
+  if (noteMatch) {
+    const storedAs = decodeURIComponent(noteMatch[1]);
+    const full = notePathFor(uid, storedAs);
+    if (!full) return fail(res, 400, '非法文件名');
 
-on('POST', '/api/admin/users/:id/role', async (req, res, params) => {
-  const admin = await requireAdmin(req);
-  const target = findUser(params.id);
-  if (!target) fail(404, '用户不存在');
-  if (target.name === SUPER_ADMIN) fail(400, '超级管理员不可调整角色');
-  const body = await readJson(req);
-  if (!['admin', 'user'].includes(body.role)) fail(400, '角色必须为 admin 或 user');
-  target.role = body.role;
-  await saveGlobal('users');
-  json(res, 200, { user: userView(target) });
-});
-
-on('DELETE', '/api/admin/users/:id', async (req, res, params) => {
-  const admin = await requireAdmin(req);
-  const target = findUser(params.id);
-  if (!target) fail(404, '用户不存在');
-  if (target.name === SUPER_ADMIN) fail(400, '超级管理员不可删除');
-
-  // 级联清理：tree/notes/photos/blueprints/friends/chats/feedback/sessions
-  await fs.promises.rm(path.join(DATA_DIR, 'users', target.id), { recursive: true, force: true });
-  const owned = store.blueprints.filter(b => b.ownerId === target.id);
-  for (const bp of owned) {
-    await fs.promises.rm(blueprintDir(bp.id), { recursive: true, force: true });
+    if (req.method === 'GET') {
+      let stat;
+      try { stat = await fsp.stat(full); } catch (e) { return fail(res, 404, '文件不存在'); }
+      res.writeHead(200, {
+        'Content-Type': extMime(storedAs),
+        'Content-Length': stat.size,
+        'Cache-Control': 'no-store',
+        'Content-Disposition': `inline; filename*=UTF-8''${encodeURIComponent(storedAs.replace(/^[^-]+-/, ''))}`
+      });
+      fs.createReadStream(full).pipe(res);
+      return;
+    }
+    if (req.method === 'PUT') {
+      const buf = await readBody(req);
+      try { await fsp.writeFile(full, buf); } catch (e) { return fail(res, 404, '文件不存在，请重新上传'); }
+      return sendJson(res, 200, { ok: true, size: buf.length });
+    }
+    if (req.method === 'DELETE') {
+      await fsp.unlink(full).catch(() => {});
+      return sendJson(res, 200, { ok: true });
+    }
   }
-  store.blueprints = store.blueprints.filter(b => b.ownerId !== target.id);
-  store.friends = store.friends.filter(f => f.a !== target.id && f.b !== target.id);
-  store.chats = store.chats.filter(c => c.a !== target.id && c.b !== target.id);
-  store.feedback = store.feedback.filter(f => f.uid !== target.id).map(f => ({
-    ...f,
-    replies: (f.replies || []).filter(r => r.uid !== target.id),
-  }));
-  for (const t of Object.keys(store.sessions)) {
-    if (store.sessions[t].uid === target.id) delete store.sessions[t];
+
+  /* 节点描述照片：上传 / 读取 / 删除 */
+  if (p === '/api/photos' && req.method === 'POST') {
+    const name = safeFileName(url.searchParams.get('name') || '');
+    const nodeId = (url.searchParams.get('nodeId') || '').slice(0, 64);
+    if (!nodeId) return fail(res, 400, '缺少 nodeId');
+    if (!/\.(png|jpe?g|gif|webp|bmp)$/i.test(name)) return fail(res, 400, '只支持图片文件');
+    const buf = await readBody(req);
+    if (!buf.length) return fail(res, 400, '文件是空的');
+    const id = newId('ph');
+    const storedAs = `${id}-${name}`;
+    await fsp.mkdir(photosDir(uid), { recursive: true });
+    await fsp.writeFile(path.join(photosDir(uid), storedAs), buf);
+    return sendJson(res, 201, {
+      ok: true,
+      photo: {
+        id: id, nodeId: nodeId, name: name, mime: extMime(name),
+        size: buf.length, storedAs: storedAs, createdAt: Date.now()
+      }
+    });
   }
-  store.users = store.users.filter(u => u.id !== target.id);
-  await Promise.all([saveGlobal('users'), saveGlobal('blueprints'), saveGlobal('friends'), saveGlobal('chats'), saveGlobal('feedback'), saveGlobal('sessions')]);
-  json(res, 200, { ok: true });
-});
 
-// --- 状态
-
-on('GET', '/api/status', async (req, res) => {
-  json(res, 200, {
-    ok: true,
-    time: new Date().toISOString(),
-    week: isoWeekKey(new Date()),
-    users: store.users.length,
-    superAdmin: SUPER_ADMIN,
-    version: '1.0.0',
-  });
-});
-
-// ---------------------------------------------------------------- 静态资源
-
-const CSP = nonce => [
-  "default-src 'self'",
-  `script-src 'nonce-${nonce}'`,
-  `style-src 'nonce-${nonce}'`,
-  "img-src 'self' data: blob:",
-  "connect-src 'self'",
-  "font-src 'self'",
-  "object-src 'none'",
-  "base-uri 'none'",
-  "form-action 'self'",
-  "frame-ancestors 'none'",
-].join('; ');
-
-async function serveIndex(req, res) {
-  const nonce = crypto.randomBytes(16).toString('base64');
-  let html;
-  try {
-    html = await fs.promises.readFile(path.join(ROOT, 'index.html'), 'utf8');
-  } catch {
-    return json(res, 500, { error: '前端文件缺失' });
+  const photoMatch = p.match(/^\/api\/photos\/(.+)$/);
+  if (photoMatch) {
+    const storedAs = decodeURIComponent(photoMatch[1]);
+    const full = photoPathFor(uid, storedAs);
+    if (!full) return fail(res, 400, '非法文件名');
+    if (req.method === 'GET') {
+      let stat;
+      try { stat = await fsp.stat(full); } catch (e) { return fail(res, 404, '图片不存在'); }
+      res.writeHead(200, {
+        'Content-Type': extMime(storedAs),
+        'Content-Length': stat.size,
+        'Cache-Control': 'no-store'
+      });
+      fs.createReadStream(full).pipe(res);
+      return;
+    }
+    if (req.method === 'DELETE') {
+      await fsp.unlink(full).catch(() => {});
+      return sendJson(res, 200, { ok: true });
+    }
   }
-  html = html.split('__CSP_NONCE__').join(nonce);
+
+  if (p === '/api/export' && req.method === 'GET') {
+    const tree = await readTree(uid);
+    const files = [];
+    for (const f of tree.files) {
+      const entry = { id: f.id, nodeId: f.nodeId, name: f.name, mime: f.mime, size: f.size, createdAt: f.createdAt };
+      const full = notePathFor(uid, f.storedAs);
+      try { if (full) entry.data = (await fsp.readFile(full)).toString('base64'); } catch (e) {}
+      files.push(entry);
+    }
+    return sendJson(res, 200, {
+      format: 'tech-tree', version: VERSION,
+      exportedAt: new Date().toISOString(),
+      owner: user.name,
+      points: tree.points,
+      categories: tree.categories,
+      abilities: tree.abilities,
+      files: files,
+      tasks: tree.tasks,
+      week: tree.week,
+      timer: tree.timer
+    });
+  }
+
+  if (p === '/api/import' && req.method === 'POST') {
+    let doc;
+    try { doc = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+    catch (e) { return fail(res, 400, '文件不是合法的 JSON'); }
+    if (!Array.isArray(doc.abilities)) return fail(res, 400, '这个文件里没有study-tree数据（缺少 abilities）');
+
+    const backupDir = path.join(userDir(uid), 'backup', stamp());
+    await fsp.mkdir(backupDir, { recursive: true });
+    await fsp.copyFile(treePath(uid), path.join(backupDir, 'tree.json')).catch(() => {});
+    try {
+      const names = await fsp.readdir(notesDir(uid));
+      if (names.length) {
+        await fsp.rename(notesDir(uid), path.join(backupDir, 'notes')).catch(() => {});
+      }
+    } catch (e) {}
+    await fsp.mkdir(notesDir(uid), { recursive: true });
+
+    const tree = sanitizeTree(Object.assign({}, doc, { files: [] }));
+    const valid = new Set(tree.abilities.map((a) => a.id));
+    const kept = [];
+    for (const f of Array.isArray(doc.files) ? doc.files : []) {
+      if (!f || !valid.has(f.nodeId)) continue;
+      const name = safeFileName(f.name || '');
+      if (!name) continue;
+      const id = typeof f.id === 'string' && f.id ? f.id.slice(0, 64) : newId('f');
+      let storedAs = '';
+      if (typeof f.data === 'string' && f.data) {
+        storedAs = `${id}-${name}`;
+        await fsp.writeFile(path.join(notesDir(uid), storedAs), Buffer.from(f.data, 'base64')).catch(() => { storedAs = ''; });
+      }
+      kept.push({
+        id: id, nodeId: f.nodeId, name: name,
+        mime: typeof f.mime === 'string' ? f.mime : extMime(name),
+        size: isFinite(Number(f.size)) ? Number(f.size) : 0,
+        storedAs: storedAs,
+        createdAt: isFinite(Number(f.createdAt)) ? Number(f.createdAt) : Date.now()
+      });
+    }
+    tree.files = kept;
+    const saved = await writeTree(uid, tree);
+    return sendJson(res, 200, { ok: true, tree: saved });
+  }
+
+  /* ---------------- 蓝图 ---------------- */
+
+  if (p === '/api/blueprints' && req.method === 'GET') {
+    const scope = String(url.searchParams.get('scope') || 'all');
+    const cat = String(url.searchParams.get('cat') || '');
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
+    const friendOnly = url.searchParams.get('friend') === '1';
+
+    const all = await loadBlueprints();
+    let list = all.filter((b) => {
+      const mine = b.ownerId === uid;
+      if (scope === 'mine') return mine;
+      if (scope === 'others') return !mine && canSeeBp(uid, b);
+      return canSeeBp(uid, b);
+    });
+
+    // 「好友蓝图」：只看好友发布的（不含自己），且仅保留好友可见的那部分
+    if (friendOnly) list = list.filter((b) => b.ownerId !== uid && areFriends(uid, b.ownerId));
+
+    // 指定作者：看别人图谱时只看这个人的蓝图
+    const ownerFilter = String(url.searchParams.get('owner') || '');
+    if (ownerFilter) list = list.filter((b) => b.ownerId === ownerFilter);
+
+    if (q) {
+      list = list.filter((b) =>
+        String(b.title || '').toLowerCase().indexOf(q) > -1 ||
+        String(b.note || '').toLowerCase().indexOf(q) > -1 ||
+        String(b.ownerName || '').toLowerCase().indexOf(q) > -1
+      );
+    }
+
+    const counts = { all: list.length, friends: 0 };
+    BP_CAT_IDS.forEach((id) => { counts[id] = 0; });
+    list.forEach((b) => {
+      counts[b.category] = (counts[b.category] || 0) + 1;
+      if (b.ownerId !== uid && areFriends(uid, b.ownerId)) counts.friends++;
+    });
+
+    if (cat && BP_CAT_IDS.indexOf(cat) > -1) list = list.filter((b) => b.category === cat);
+
+    const brief = list
+      .slice()
+      .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
+      .map((b) => {
+        const sc = scoreBlueprint(b);
+        return {
+          id: b.id, title: b.title, note: b.note, ownerName: b.ownerName,
+          ownerId: b.ownerId,
+          category: b.category, categoryName: b.categoryName,
+          visibility: b.visibility || 'public',
+          visibilityName: bpVisibilityName(b.visibility || 'public'),
+          nodeCount: b.nodes.length,
+          fileCount: b.files.length, size: b.size,
+          createdAt: b.createdAt, updatedAt: b.updatedAt || b.createdAt,
+          sourceNodeId: b.sourceNodeId || '',
+          cover: (b.images && b.images.length) ? ('/api/blueprints/' + b.id + '/images/' + b.images[0].id) : '',
+          imageCount: (b.images || []).length,
+          score: sc.score,
+          belowThreshold: BP_MIN_SCORE > 0 && sc.score < BP_MIN_SCORE,
+          mine: b.ownerId === uid
+        };
+      });
+    return sendJson(res, 200, { blueprints: brief, counts: counts, total: brief.length });
+  }
+
+  if (p === '/api/blueprints' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+    catch (e) { return fail(res, 400, '请求格式有误'); }
+
+    const nodeId = String(body.nodeId || '');
+    const tree = await readTree(uid);
+    const sub = collectSubtree(tree, nodeId);
+    if (!sub) return fail(res, 404, '找不到这个父级');
+    if (sub.root.kind !== 'group') return fail(res, 400, '只能把父级能力发布成蓝图');
+
+    const id = newId('bp');
+    const dir = path.join(BP_DIR, id);
+    const filesDir = path.join(dir, 'files');
+    await fsp.mkdir(filesDir, { recursive: true });
+
+    const files = [];
+    for (const f of sub.files) {
+      if (f.local) continue; // 本地笔记不打包进蓝图：服务器没有文件内容，蓝图只带描述和图
+      const src = notePathFor(uid, f.storedAs);
+      let storedAs = '';
+      if (src && fs.existsSync(src)) {
+        storedAs = safeFileName(f.storedAs);
+        await fsp.copyFile(src, path.join(filesDir, storedAs)).catch(() => { storedAs = ''; });
+      }
+      files.push({
+        id: f.id, nodeId: f.nodeId, name: f.name, mime: f.mime,
+        size: f.size, storedAs: storedAs, createdAt: f.createdAt
+      });
+    }
+
+    // 蓝图配图：最多 3 张，每张 ≤ 2MB（base64 dataURL）
+    const images = [];
+    const rawImages = Array.isArray(body.images) ? body.images.slice(0, 3) : [];
+    if (rawImages.length) {
+      const imgDir = path.join(dir, 'images');
+      await fsp.mkdir(imgDir, { recursive: true });
+      for (const img of rawImages) {
+        if (!img || typeof img !== 'object') continue;
+        const m = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i.exec(String(img.data || ''));
+        if (!m) continue;
+        const buf = Buffer.from(m[2], 'base64');
+        if (!buf.length || buf.length > 2 * 1024 * 1024) continue;
+        const imgId = newId('img');
+        const storedAs = `${imgId}-${safeFileName(img.name || 'image.png')}`;
+        await fsp.writeFile(path.join(imgDir, storedAs), buf);
+        images.push({
+          id: imgId,
+          name: String(img.name || 'image').slice(0, 80),
+          mime: m[1],
+          size: buf.length,
+          storedAs: storedAs
+        });
+      }
+    }
+
+    const treeCat = tree.categories.find((c) => c.id === sub.root.categoryId);
+    let bpCategory = BP_CAT_IDS.indexOf(String(body.category || '')) > -1
+      ? String(body.category)
+      : bpCategoryOf({ categoryName: treeCat ? treeCat.name : '', title: sub.root.name });
+
+    const bpBase = {
+      id: id,
+      title: String(body.title || sub.root.name).trim().slice(0, 40) || sub.root.name,
+      note: String(body.note || '').trim().slice(0, 300),
+      ownerId: uid,
+      ownerName: displayNameOf(user),
+      category: bpCategory,
+      categoryName: bpCatName(bpCategory),
+      visibility: BP_VIS_IDS.indexOf(String(body.visibility || '')) > -1 ? String(body.visibility) : 'public',
+      treeCategoryName: treeCat ? treeCat.name : '',
+      sourceNodeId: sub.root.id,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      size: files.reduce((s, f) => s + (f.size || 0), 0),
+      nodes: sub.nodes.map((n) => ({
+        id: n.id, name: n.name, cost: n.cost, unlocked: n.unlocked, kind: n.kind,
+        parentId: n.parentId, prereqIds: n.prereqIds || [], note: n.note
+      })),
+      files: files,
+      images: images
+    };
+    const bp = Object.assign(bpBase, scoreBlueprint(bpBase));
+    await writeJson(path.join(dir, 'blueprint.json'), bp);
+
+    const list = await loadBlueprints();
+    list.push({
+      id: bp.id, title: bp.title, note: bp.note, ownerId: bp.ownerId, ownerName: bp.ownerName,
+      category: bp.category, categoryName: bp.categoryName, visibility: bp.visibility,
+      sourceNodeId: bp.sourceNodeId, treeCategoryName: bp.treeCategoryName,
+      createdAt: bp.createdAt, updatedAt: bp.updatedAt, size: bp.size,
+      nodes: bp.nodes, files: bp.files, images: bp.images || []
+    });
+    await saveBlueprints(list);
+    return sendJson(res, 201, { ok: true, blueprint: bp });
+  }
+
+  /* 蓝图配图 */
+  const bpImgMatch = p.match(/^\/api\/blueprints\/([^/]+)\/images\/([^/]+)$/);
+  if (bpImgMatch && req.method === 'GET') {
+    const bpId0 = safeFileName(bpImgMatch[1]);
+    const imgId = safeFileName(bpImgMatch[2]);
+    const bp0 = await readJson(path.join(BP_DIR, bpId0, 'blueprint.json'), null);
+    if (!bp0) return fail(res, 404, '蓝图不存在');
+    if (!canSeeBp(uid, bp0)) return fail(res, 403, '无权查看这个蓝图');
+    const img = (bp0.images || []).find((x) => x.id === imgId);
+    if (!img) return fail(res, 404, '图片不存在');
+    const full = path.join(BP_DIR, bpId0, 'images', safeFileName(img.storedAs || ''));
+    let st;
+    try { st = await fsp.stat(full); } catch (e) { return fail(res, 404, '图片文件不存在'); }
+    res.writeHead(200, {
+      'Content-Type': img.mime || 'image/png',
+      'Content-Length': st.size,
+      'Cache-Control': 'public, max-age=86400'
+    });
+    fs.createReadStream(full).pipe(res);
+    return;
+  }
+
+  const bpMatch = p.match(/^\/api\/blueprints\/([^/]+)(?:\/(import|refresh))?$/);
+  if (bpMatch) {
+    const bpId = safeFileName(bpMatch[1]);
+    const action = bpMatch[2] || '';
+    const isImport = action === 'import';
+    const bp = await readJson(path.join(BP_DIR, bpId, 'blueprint.json'), null);
+    if (!bp) return fail(res, 404, '蓝图不存在');
+    if (!bp.category) {
+      bp.category = bpCategoryOf(bp);
+      bp.categoryName = bpCatName(bp.category);
+    }
+
+    /* 详情：给「我的蓝图库」看里面有哪些节点 */
+    if (req.method === 'GET' && !action) {
+      if (!canSeeBp(uid, bp)) return fail(res, 403, '这个蓝图只对作者/好友可见');
+      return sendJson(res, 200, {
+        blueprint: {
+          id: bp.id,
+          title: bp.title,
+          note: bp.note,
+          ownerName: bp.ownerName,
+          mine: bp.ownerId === uid,
+          category: bp.category,
+          categoryName: bp.categoryName,
+          visibility: bp.visibility || 'public',
+          visibilityName: bpVisibilityName(bp.visibility || 'public'),
+          sourceNodeId: bp.sourceNodeId || '',
+          score: scoreBlueprint(bp).score,
+          scoreParts: scoreBlueprint(bp).parts,
+          belowThreshold: BP_MIN_SCORE > 0 && scoreBlueprint(bp).score < BP_MIN_SCORE,
+          createdAt: bp.createdAt,
+          updatedAt: bp.updatedAt || bp.createdAt,
+          size: bp.size,
+          nodes: (bp.nodes || []).map((x) => ({
+            id: x.id, name: x.name, kind: x.kind, cost: x.cost,
+            parentId: x.parentId || null, prereqIds: x.prereqIds || []
+          })),
+          files: (bp.files || []).map((x) => ({ name: x.name, size: x.size })),
+          images: (bp.images || []).map((x) => ({ id: x.id, name: x.name, size: x.size, mime: x.mime }))
+        }
+      });
+    }
+
+    /* 编辑元信息：标题 / 说明 / 分类 */
+    if (req.method === 'PUT' && !action) {
+      if (bp.ownerId !== uid) return fail(res, 403, '只能编辑自己发布的蓝图');
+      let body;
+      try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+      catch (e) { return fail(res, 400, '请求格式有误'); }
+
+      if (body.title !== undefined) {
+        const t = String(body.title || '').trim().slice(0, 40);
+        if (!t) return fail(res, 400, '标题不能为空');
+        bp.title = t;
+      }
+      if (body.note !== undefined) bp.note = String(body.note || '').trim().slice(0, 300);
+      if (body.category !== undefined) {
+        if (BP_CAT_IDS.indexOf(String(body.category)) < 0) return fail(res, 400, '分类不合法');
+        bp.category = String(body.category);
+        bp.categoryName = bpCatName(bp.category);
+      }
+      if (body.visibility !== undefined) {
+        if (BP_VIS_IDS.indexOf(String(body.visibility)) < 0) return fail(res, 400, '可见性不合法');
+        bp.visibility = String(body.visibility);
+      }
+      /* 配图：带上 id 的表示保留原图，带 data 的表示新增（最多 3 张） */
+      if (body.images !== undefined) {
+        const imgDir = path.join(BP_DIR, bpId, 'images');
+        const oldImages = bp.images || [];
+        const next = [];
+        const raw = Array.isArray(body.images) ? body.images.slice(0, 3) : [];
+        let ensuredDir = false;
+        for (const img of raw) {
+          if (!img || typeof img !== 'object') continue;
+          if (img.id) {
+            const hit = oldImages.find((x) => x.id === img.id);
+            if (hit) { next.push(hit); continue; }
+          }
+          const m = /^data:(image\/[a-z0-9.+-]+);base64,([A-Za-z0-9+/=]+)$/i.exec(String(img.data || ''));
+          if (!m) continue;
+          const buf = Buffer.from(m[2], 'base64');
+          if (!buf.length || buf.length > 2 * 1024 * 1024) continue;
+          if (!ensuredDir) { await fsp.mkdir(imgDir, { recursive: true }); ensuredDir = true; }
+          const imgId = newId('img');
+          const storedAs = `${imgId}-${safeFileName(img.name || 'image.png')}`;
+          await fsp.writeFile(path.join(imgDir, storedAs), buf);
+          next.push({
+            id: imgId,
+            name: String(img.name || 'image').slice(0, 80),
+            mime: m[1],
+            size: buf.length,
+            storedAs: storedAs
+          });
+        }
+        const keep = new Set(next.map((x) => x.id));
+        for (const o of oldImages) {
+          if (!keep.has(o.id)) {
+            await fsp.rm(path.join(imgDir, safeFileName(o.storedAs || '')), { force: true }).catch(() => {});
+          }
+        }
+        bp.images = next;
+      }
+      bp.updatedAt = Date.now();
+      await writeJson(path.join(BP_DIR, bpId, 'blueprint.json'), bp);
+
+      const list = await loadBlueprints();
+      const idx = list.findIndex((b) => b.id === bpId);
+      if (idx > -1) {
+        list[idx] = Object.assign({}, list[idx], {
+          title: bp.title, note: bp.note, category: bp.category,
+          categoryName: bp.categoryName, visibility: bp.visibility, updatedAt: bp.updatedAt
+        });
+        await saveBlueprints(list);
+      }
+      return sendJson(res, 200, {
+        ok: true,
+        blueprint: {
+          id: bp.id, title: bp.title, note: bp.note,
+          category: bp.category, categoryName: bp.categoryName,
+          visibility: bp.visibility, updatedAt: bp.updatedAt
+        }
+      });
+    }
+
+    /* 用当前study-tree重新同步内容（来源父级还在才行） */
+    if (action === 'refresh' && req.method === 'POST') {
+      if (bp.ownerId !== uid) return fail(res, 403, '只能更新自己发布的蓝图');
+      if (!bp.sourceNodeId) {
+        return fail(res, 400, '这个蓝图发布得比较早，没有记录来源节点，不能自动同步。可以只改标题/说明，或重新发布一份。');
+      }
+      const tree = await readTree(uid);
+      const sub = collectSubtree(tree, bp.sourceNodeId);
+      if (!sub) return fail(res, 404, '原来的父级已经被删除或改名，无法同步内容。');
+
+      const filesDir = path.join(BP_DIR, bpId, 'files');
+      await fsp.rm(filesDir, { recursive: true, force: true }).catch(() => {});
+      await fsp.mkdir(filesDir, { recursive: true });
+
+      const files = [];
+      for (const f of sub.files) {
+        const src = notePathFor(uid, f.storedAs);
+        let storedAs = '';
+        if (src && fs.existsSync(src)) {
+          storedAs = safeFileName(f.storedAs);
+          await fsp.copyFile(src, path.join(filesDir, storedAs)).catch(() => { storedAs = ''; });
+        }
+        files.push({
+          id: f.id, nodeId: f.nodeId, name: f.name, mime: f.mime,
+          size: f.size, storedAs: storedAs, createdAt: f.createdAt
+        });
+      }
+
+      bp.nodes = sub.nodes.map((x) => ({
+        id: x.id, name: x.name, cost: x.cost, unlocked: x.unlocked, kind: x.kind,
+        parentId: x.parentId, prereqIds: x.prereqIds || [], note: x.note
+      }));
+      bp.files = files;
+      bp.size = files.reduce((sum, f) => sum + (f.size || 0), 0);
+      bp.updatedAt = Date.now();
+      Object.assign(bp, scoreBlueprint(bp));
+      await writeJson(path.join(BP_DIR, bpId, 'blueprint.json'), bp);
+
+      const list = await loadBlueprints();
+      const idx = list.findIndex((b) => b.id === bpId);
+      if (idx > -1) {
+        list[idx] = Object.assign({}, list[idx], {
+          nodes: bp.nodes, files: bp.files, size: bp.size, updatedAt: bp.updatedAt
+        });
+        await saveBlueprints(list);
+      }
+      return sendJson(res, 200, {
+        ok: true,
+        nodeCount: bp.nodes.length,
+        fileCount: bp.files.length,
+        size: bp.size,
+        updatedAt: bp.updatedAt
+      });
+    }
+
+    if (isImport && req.method === 'POST') {
+      if (!canSeeBp(uid, bp)) return fail(res, 403, '这个蓝图只对作者/好友可见');
+      let body = {};
+      try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); } catch (e) {}
+
+      const tree = await readTree(uid);
+      const targetCat = String(body.categoryId || '');
+      const cat = tree.categories.find((c) => c.id === targetCat)
+        || tree.categories.find((c) => c.name === bp.categoryName)
+        || tree.categories[0];
+
+      /* 只保留完整子树：从合法根（父级为空，或就是蓝图来源根）出发能连到的节点。
+         老蓝图快照里可能残留「父级指向已不存在节点」的悬空数据，
+         以前会把它们全部铺到分类顶层，变成一堆散乱节点，这里过滤掉。 */
+      const bpInSet = new Set(bp.nodes.map((n) => n.id));
+      const kidsOf = new Map();
+      bp.nodes.forEach((n) => {
+        if (!n.parentId || !bpInSet.has(n.parentId)) return;
+        if (!kidsOf.has(n.parentId)) kidsOf.set(n.parentId, []);
+        kidsOf.get(n.parentId).push(n);
+      });
+      const bpRoots = bp.nodes.filter((n) => !n.parentId || n.id === bp.sourceNodeId);
+      const keptNodes = [];
+      const keptIds = new Set();
+      const stack = bpRoots.slice();
+      while (stack.length) {
+        const n = stack.pop();
+        if (keptIds.has(n.id)) continue;
+        keptIds.add(n.id);
+        keptNodes.push(n);
+        (kidsOf.get(n.id) || []).forEach((k) => stack.push(k));
+      }
+
+      if (!keptNodes.length) {
+        return fail(res, 400, '这个蓝图的数据不完整（找不到有效的根节点），导入不了');
+      }
+
+      const idMap = {};
+      keptNodes.forEach((n) => { idMap[n.id] = newId('a'); });
+      const nodes = keptNodes.map((n) => ({
+        id: idMap[n.id],
+        name: n.name,
+        cost: n.cost,
+        unlocked: false,
+        kind: n.kind,
+        parentId: n.parentId ? (idMap[n.parentId] || null) : null,
+        prereqIds: (n.prereqIds || []).map((id) => idMap[id]).filter(Boolean),
+        categoryId: n.parentId ? null : cat.id,
+        ox: 0, oy: 0,
+        note: n.note || ''
+      }));
+
+      await fsp.mkdir(notesDir(uid), { recursive: true });
+      const files = [];
+      for (const f of bp.files) {
+        const newNodeId = idMap[f.nodeId];
+        if (!newNodeId) continue;
+        const from = path.join(BP_DIR, bpId, 'files', safeFileName(f.storedAs || ''));
+        const newStored = `${newId('f')}-${safeFileName(f.name)}`;
+        if (f.storedAs && fs.existsSync(from)) {
+          await fsp.copyFile(from, path.join(notesDir(uid), newStored)).catch(() => {});
+        }
+        files.push({
+          id: newId('f'), nodeId: newNodeId, name: f.name, mime: f.mime,
+          size: f.size, storedAs: newStored, createdAt: Date.now()
+        });
+      }
+
+      tree.abilities = tree.abilities.concat(nodes);
+      tree.files = tree.files.concat(files);
+      const saved = await writeTree(uid, tree);
+      return sendJson(res, 200, { ok: true, tree: saved, added: nodes.length, categoryId: cat.id });
+    }
+
+    if (req.method === 'DELETE' && !isImport) {
+      if (bp.ownerId !== uid) return fail(res, 403, '只能删除自己发布的蓝图');
+      const list = (await loadBlueprints()).filter((b) => b.id !== bpId);
+      await saveBlueprints(list);
+      await fsp.rm(path.join(BP_DIR, bpId), { recursive: true, force: true }).catch(() => {});
+      return sendJson(res, 200, { ok: true });
+    }
+  }
+
+  if (p === '/api/users' && req.method === 'GET') {
+    // 防用户枚举：必须给 ≥2 个字符，限制频率与返回条数，且不返回全站账号总数
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
+    if (hitsKey('search:' + uid, 60, 10 * 60 * 1000)) {
+      return fail(res, 429, '搜索太频繁，请稍后再试');
+    }
+    if (q.length < 2) {
+      return sendJson(res, 200, { users: [], needMore: true, selfName: user.name });
+    }
+    const list = users
+      .filter((u) => u.id !== uid)
+      .filter((u) => u.name.toLowerCase().indexOf(q) > -1 ||
+        String(u.displayName || '').toLowerCase().indexOf(q) > -1)
+      .slice(0, 12)
+      .map((u) => ({ id: u.id, name: u.name, displayName: displayNameOf(u), avatar: typeof u.avatar === 'string' ? u.avatar : '', rel: relationOf(uid, u.id), friend: areFriends(uid, u.id) }));
+    return sendJson(res, 200, { users: list, selfName: user.name });
+  }
+
+  if (p === '/api/friends' && req.method === 'GET') {
+    const list = [];
+    const incoming = [];
+    const outgoing = [];
+    friends
+      .filter((f) => f.a === uid || f.b === uid)
+      .forEach((f) => {
+        const otherId = f.a === uid ? f.b : f.a;
+        const other = users.find((u) => u.id === otherId);
+        if (!other) return;
+        const item = { id: other.id, name: displayNameOf(other), avatar: typeof other.avatar === 'string' ? other.avatar : '', at: f.at };
+        if (f.status === 'pending') {
+          (f.a === uid ? outgoing : incoming).push(item);
+        } else {
+          list.push(item);
+        }
+      });
+    return sendJson(res, 200, { friends: list, incoming, outgoing });
+  }
+
+  if (p === '/api/friends' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+    catch (e) { return fail(res, 400, '请求格式有误'); }
+
+    const target = users.find((u) => u.id === String(body.id || '')) || findUserByName(body.name);
+    if (!target) return fail(res, 404, '没有这个用户');
+    if (target.id === uid) return fail(res, 400, '不能加自己为好友');
+
+    const rel = relationOf(uid, target.id);
+    if (rel === 'friend') return sendJson(res, 200, { ok: true, already: true, rel: 'friend' });
+    if (rel === 'out') return sendJson(res, 200, { ok: true, already: true, rel: 'out' });
+
+    // 对方已经申请过我 → 直接算同意，省一次点击
+    if (rel === 'in') {
+      const f = linkBetween(uid, target.id);
+      f.status = 'accepted';
+      f.at = Date.now();
+      await writeJson(FRIENDS_FILE, friends);
+      return sendJson(res, 200, { ok: true, accepted: true, rel: 'friend', friend: { id: target.id, name: target.name } });
+    }
+
+    friends.push({ a: uid, b: target.id, at: Date.now(), status: 'pending' });
+    await writeJson(FRIENDS_FILE, friends);
+    return sendJson(res, 200, { ok: true, pending: true, rel: 'out', friend: { id: target.id, name: target.name } });
+  }
+
+  const acceptMatch = p.match(/^\/api\/friends\/([^/]+)\/accept$/);
+  if (acceptMatch && req.method === 'POST') {
+    const fromId = acceptMatch[1];
+    const f = friends.find((x) => x.a === fromId && x.b === uid && x.status === 'pending');
+    if (!f) return fail(res, 404, '没有这条好友申请');
+    const sender = users.find((u) => u.id === fromId);
+    if (!sender) return fail(res, 404, '用户不存在');
+    f.status = 'accepted';
+    f.at = Date.now();
+    await writeJson(FRIENDS_FILE, friends);
+    return sendJson(res, 200, { ok: true, friend: { id: sender.id, name: sender.name } });
+  }
+
+  const rejectMatch = p.match(/^\/api\/friends\/([^/]+)\/reject$/);
+  if (rejectMatch && req.method === 'POST') {
+    const fromId = rejectMatch[1];
+    const before = friends.length;
+    friends = friends.filter((f) => !(f.a === fromId && f.b === uid && f.status === 'pending'));
+    if (friends.length !== before) await writeJson(FRIENDS_FILE, friends);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  const friendMatch = p.match(/^\/api\/friends\/([^/]+)$/);
+  if (friendMatch && req.method === 'DELETE') {
+    const targetId = friendMatch[1];
+    const before = friends.length;
+    friends = friends.filter((f) => !((f.a === uid && f.b === targetId) || (f.b === uid && f.a === targetId)));
+    if (friends.length !== before) await writeJson(FRIENDS_FILE, friends);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  /* ---------------- 好友私聊 ---------------- */
+  const chatMatch = p.match(/^\/api\/chat\/([^/]+)$/);
+  if (chatMatch) {
+    const otherId = chatMatch[1];
+    const other = users.find((u) => u.id === otherId);
+    if (!other) return fail(res, 404, '没有这个用户');
+    if (!areFriends(uid, otherId)) return fail(res, 403, '只能和好友聊天');
+
+    if (req.method === 'GET') {
+      const after = Number(url.searchParams.get('after') || 0) || 0;
+      const list = chats
+        .filter((m) => (m.from === uid && m.to === otherId) || (m.from === otherId && m.to === uid))
+        .filter((m) => m.at > after)
+        .sort((a, b) => a.at - b.at)
+        .slice(-200)
+        .map((m) => ({ id: m.id, from: m.from, text: m.text, at: m.at }));
+      return sendJson(res, 200, {
+        messages: list,
+        friend: { id: other.id, name: displayNameOf(other), avatar: typeof other.avatar === 'string' ? other.avatar : '' }
+      });
+    }
+
+    if (req.method === 'POST') {
+      if (hitsKey('chat:' + uid, 120, 10 * 60 * 1000)) {
+        return fail(res, 429, '发得太快了，歇一会儿再发');
+      }
+      let body;
+      try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+      catch (e) { return fail(res, 400, '请求格式有误'); }
+      const text = String(body.text || '').trim().slice(0, 1000);
+      if (!text) return fail(res, 400, '消息不能为空');
+
+      const msg = { id: newId('m'), from: uid, to: otherId, text: text, at: Date.now() };
+      chats.push(msg);
+      if (chats.length > 5000) chats = chats.slice(-4000);
+      await writeJson(CHAT_FILE, chats);
+      return sendJson(res, 200, { message: { id: msg.id, from: msg.from, text: msg.text, at: msg.at } });
+    }
+  }
+
+  const friendTree = p.match(/^\/api\/users\/([^/]+)\/tree$/);
+  if (friendTree && req.method === 'GET') {
+    const targetId = friendTree[1];
+    if (targetId !== uid && !isAdmin(user) && !areFriends(uid, targetId)) {
+      return fail(res, 403, '对方同意好友申请后才能看');
+    }
+    const target = users.find((u) => u.id === targetId);
+    if (!target) return fail(res, 404, '用户不存在');
+    const pv = normalizePrivacy(target.privacy);
+    if (targetId !== uid && !isAdmin(user) && !pv.tree) {
+      return fail(res, 403, '对方没有开放图谱给好友');
+    }
+    const t = await readTree(targetId);
+    // 时间安排单独开关：对好友隐藏时不下发
+    if (targetId !== uid && !pv.timer) {
+      t.timer = { rate: 50, courses: [], plans: [], spent: 0, bonus: 0, weekKey: '', weeks: {} };
+      t.timerHidden = true;
+    }
+    return sendJson(res, 200, { user: publicUser(target), tree: t });
+  }
+
+  /* ---------------- 管理员：账号一览 ---------------- */
+  if (p === '/api/admin/users' && req.method === 'GET') {
+    if (adminOnly(res, user)) return;
+    const q = String(url.searchParams.get('q') || '').trim().toLowerCase();
+    const bpsAll = await loadBlueprints();
+    const list = [];
+    for (const u of users) {
+      if (q && String(u.name || '').toLowerCase().indexOf(q) < 0 && String(u.id || '').toLowerCase().indexOf(q) < 0) continue;
+      const t = await readTree(u.id);
+      const leaves = t.abilities.filter((a) => a.kind !== 'group');
+      list.push({
+        id: u.id,
+        name: u.name,
+        displayName: displayNameOf(u),
+        avatar: typeof u.avatar === 'string' && u.avatar ? u.avatar : '',
+        role: u.role === 'admin' ? 'admin' : 'user',
+        createdAt: u.createdAt || 0,
+        lastLoginAt: u.lastLoginAt || 0,
+        nodes: t.abilities.length,
+        groups: t.abilities.length - leaves.length,
+        leaves: leaves.length,
+        unlocked: leaves.filter((a) => a.unlocked).length,
+        points: t.points,
+        exp: t.exp || 0,
+        files: t.files.length,
+        feedback: feedback.filter((f) => f.userId === u.id).length,
+        blueprints: bpsAll.filter((b) => b.ownerId === u.id).length,
+        isSelf: u.id === uid,
+        protected: isSuperAdmin(u)
+      });
+    }
+    // 管理员排前面，同级按注册先后
+    list.sort((a, b) => {
+      if (a.role !== b.role) return a.role === 'admin' ? -1 : 1;
+      return a.createdAt - b.createdAt;
+    });
+    return sendJson(res, 200, { users: list, total: list.length });
+  }
+
+  const adminBpMatch = p.match(/^\/api\/admin\/users\/([^/]+)\/blueprints$/);
+  if (adminBpMatch && req.method === 'GET') {
+    if (adminOnly(res, user)) return;
+    const targetId = adminBpMatch[1];
+    const target = users.find((u) => u.id === targetId);
+    if (!target) return fail(res, 404, '用户不存在');
+    const list = (await loadBlueprints())
+      .filter((b) => b.ownerId === targetId)
+      .sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt))
+      .map((b) => ({
+        id: b.id, title: b.title, note: b.note,
+        category: b.category, categoryName: b.categoryName,
+        nodeCount: (b.nodes || []).length,
+        fileCount: (b.files || []).length,
+        size: b.size || 0,
+        createdAt: b.createdAt, updatedAt: b.updatedAt || b.createdAt
+      }));
+    return sendJson(res, 200, { user: publicUser(target), blueprints: list, total: list.length });
+  }
+
+  /* 管理员删除账号：连带清掉这个人的树、笔记、蓝图、好友、聊天、会话、反馈 */
+  const delUserMatch = p.match(/^\/api\/admin\/users\/([^/]+)$/);
+  if (delUserMatch && req.method === 'DELETE') {
+    if (adminOnly(res, user)) return;
+    // 只有最高权限账号能删人
+    if (!isSuperAdmin(user)) return fail(res, 403, '只有最高权限账号可以删除用户');
+    const targetId = delUserMatch[1];
+    const target = users.find((u) => u.id === targetId);
+    if (!target) return fail(res, 404, '用户不存在');
+    if (target.id === uid) return fail(res, 400, '不能删除自己的账号');
+    if (isSuperAdmin(target)) return fail(res, 400, '这是最高权限账号，不能删除');
+    if (target.role === 'admin' && users.filter((u) => u.role === 'admin').length <= 1) {
+      return fail(res, 400, '至少需要保留一个管理员');
+    }
+
+    users = users.filter((u) => u.id !== targetId);
+    await writeJson(USERS_FILE, users);
+
+    let killed = 0;
+    Object.keys(sessions).forEach((k) => {
+      if (sessions[k] && sessions[k].uid === targetId) { delete sessions[k]; killed++; }
+    });
+    if (killed) await writeJson(SESSIONS_FILE, sessions);
+
+    const beforeF = friends.length;
+    friends = friends.filter((f) => f.a !== targetId && f.b !== targetId);
+    if (friends.length !== beforeF) await writeJson(FRIENDS_FILE, friends);
+
+    const beforeC = chats.length;
+    chats = chats.filter((m) => m.from !== targetId && m.to !== targetId);
+    if (chats.length !== beforeC) await writeJson(CHAT_FILE, chats);
+
+    const beforeFb = feedback.length;
+    feedback = feedback.filter((f) => f.userId !== targetId);
+    if (feedback.length !== beforeFb) await writeJson(FEEDBACK_FILE, feedback);
+
+    const allBp = await loadBlueprints();
+    const ownBp = allBp.filter((b) => b.ownerId === targetId);
+    if (ownBp.length) {
+      await saveBlueprints(allBp.filter((b) => b.ownerId !== targetId));
+      for (const b of ownBp) {
+        await fsp.rm(path.join(BP_DIR, b.id), { recursive: true, force: true }).catch(() => {});
+      }
+    }
+
+    await fsp.rm(userDir(targetId), { recursive: true, force: true }).catch(() => {});
+
+    console.log('[study-tree] 已删除账号 ' + target.name + '');
+    return sendJson(res, 200, {
+      ok: true, removed: targetId,
+      removedBlueprints: ownBp.length, removedSessions: killed
+    });
+  }
+
+  const roleMatch = p.match(/^\/api\/admin\/users\/([^/]+)\/role$/);
+  if (roleMatch && req.method === 'POST') {
+    if (adminOnly(res, user)) return;
+    let body;
+    try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+    catch (e) { return fail(res, 400, '请求格式有误'); }
+    const target = users.find((u) => u.id === roleMatch[1]);
+    if (!target) return fail(res, 404, '用户不存在');
+    if (isSuperAdmin(target)) return fail(res, 400, '这是最高权限账号，不能取消管理员身份');
+    const role = body.role === 'admin' ? 'admin' : 'user';
+    if (target.role === 'admin' && role !== 'admin') {
+      const others = users.filter((u) => u.id !== target.id && u.role === 'admin');
+      if (!others.length) return fail(res, 400, '至少需要保留一个管理员');
+    }
+    target.role = role;
+    await writeJson(USERS_FILE, users);
+    return sendJson(res, 200, { ok: true, user: publicUser(target) });
+  }
+
+  /* ---------------- 反馈 ---------------- */
+  if (p === '/api/feedback' && req.method === 'GET') {
+    const admin = isAdmin(user);
+    const list = (admin ? feedback : feedback.filter((f) => f.userId === uid))
+      .slice()
+      .sort((a, b) => b.createdAt - a.createdAt);
+    return sendJson(res, 200, {
+      feedback: list,
+      admin: admin,
+      openCount: list.filter((f) => f.status !== 'done').length
+    });
+  }
+
+  if (p === '/api/feedback' && req.method === 'POST') {
+    let body;
+    try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+    catch (e) { return fail(res, 400, '请求格式有误'); }
+    const text = String(body.text || '').trim();
+    const contact = String(body.contact || '').trim().slice(0, 120);
+    if (text.length < 2) return fail(res, 400, '请把反馈内容写清楚一点');
+    if (text.length > 2000) return fail(res, 400, '反馈内容最多 2000 字');
+    const item = {
+      id: newId('fb'),
+      userId: uid,
+      userName: displayNameOf(user),
+      text: text.slice(0, 2000),
+      contact: contact,
+      status: 'open',
+      reply: '',
+      createdAt: Date.now(),
+      repliedAt: 0
+    };
+    feedback.push(item);
+    await writeJson(FEEDBACK_FILE, feedback);
+    return sendJson(res, 200, { ok: true, item: item });
+  }
+
+  const fbAct = p.match(/^\/api\/feedback\/([^/]+)\/reply$/);
+  if (fbAct && req.method === 'POST') {
+    if (adminOnly(res, user)) return;
+    let body;
+    try { body = JSON.parse((await readBody(req)).toString('utf8') || '{}'); }
+    catch (e) { return fail(res, 400, '请求格式有误'); }
+    const item = feedback.find((f) => f.id === fbAct[1]);
+    if (!item) return fail(res, 404, '反馈不存在');
+    if (body.reply !== undefined) item.reply = String(body.reply || '').trim().slice(0, 2000);
+    item.status = body.status === 'open' ? 'open' : 'done';
+    item.repliedAt = Date.now();
+    item.repliedBy = user.name;
+    await writeJson(FEEDBACK_FILE, feedback);
+    return sendJson(res, 200, { ok: true, item: item });
+  }
+
+  const fbDel = p.match(/^\/api\/feedback\/([^/]+)$/);
+  if (fbDel && req.method === 'DELETE') {
+    if (adminOnly(res, user)) return;
+    const before = feedback.length;
+    feedback = feedback.filter((f) => f.id !== fbDel[1]);
+    if (feedback.length !== before) await writeJson(FEEDBACK_FILE, feedback);
+    return sendJson(res, 200, { ok: true });
+  }
+
+  if (p === '/api/status' && req.method === 'GET') {
+    return sendJson(res, 200, { ok: true, version: VERSION, user: publicUser(user) });
+  }
+
+  return fail(res, 404, '接口不存在');
+}
+
+/* ------------------------------------------------------------------ */
+/* 静态文件                                                            */
+/* ------------------------------------------------------------------ */
+
+async function serveStatic(req, res, url) {
+  let rel;
+  try { rel = decodeURIComponent(url.pathname); } catch (e) { return fail(res, 400, '非法路径'); }
+  if (rel === '/' || rel === '') rel = '/index.html';
+
+  // 白名单之外一律 404：/data/*、/.workbuddy/*、server.js、备份目录都不会被下载
+  if (STATIC_FILES.has(rel) === false) return fail(res, 404, '页面不存在');
+  if (rel.indexOf('..') > -1) return fail(res, 403, '禁止访问');
+
+  const full = path.join(ROOT, rel.slice(1));
+  if (!full.startsWith(ROOT)) return fail(res, 403, '禁止访问');
+
+  let stat;
+  try { stat = await fsp.stat(full); } catch (e) { return fail(res, 404, '页面不存在'); }
+  if (!stat.isFile()) return fail(res, 404, '页面不存在');
+
+  const ext = path.extname(full).toLowerCase();
+
+  // HTML 走字符串返回：给内联 <script> 打上本次请求的 CSP nonce
+  if (ext === '.html') {
+    let html;
+    try { html = await fsp.readFile(full, 'utf8'); } catch (e) { return fail(res, 404, '页面不存在'); }
+    html = html.replace(/<script(?![^>]*\bsrc=)(?![^>]*\bnonce=)/g,
+      '<script nonce="' + res._cspNonce + '"');
+    const buf = Buffer.from(html, 'utf8');
+    res.writeHead(200, {
+      'Content-Type': 'text/html; charset=utf-8',
+      'Content-Length': buf.length,
+      'Cache-Control': 'no-store'
+    });
+    return res.end(buf);
+  }
+
   res.writeHead(200, {
-    'Content-Type': 'text/html; charset=utf-8',
-    'Cache-Control': 'no-store',
-    'Content-Security-Policy': CSP(nonce),
+    'Content-Type': MIME[ext] || 'application/octet-stream',
+    'Content-Length': stat.size,
+    'Cache-Control': 'no-store'
   });
-  res.end(req.method === 'HEAD' ? undefined : html);
+  fs.createReadStream(full).pipe(res);
 }
 
-async function handleStatic(req, res, pathname) {
-  if (pathname === '/' || pathname === '/index.html') return serveIndex(req, res);
-  if (pathname === '/robots.txt') {
-    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' });
-    return res.end(req.method === 'HEAD' ? undefined : 'User-agent: *\nDisallow: /api/\n');
-  }
-  if (pathname === '/favicon.ico') {
-    const file = path.join(ROOT, 'favicon.ico');
-    const buf = await fs.promises.readFile(file).catch(() => null);
-    if (buf) {
-      res.writeHead(200, { 'Content-Type': 'image/x-icon', 'Cache-Control': 'public, max-age=86400' });
-      return res.end(req.method === 'HEAD' ? undefined : buf);
+/* ------------------------------------------------------------------ */
+/* 服务器                                                              */
+/* ------------------------------------------------------------------ */
+
+const server = http.createServer(async (req, res) => {
+  const url = new URL(req.url, 'http://localhost');
+  res._cspNonce = crypto.randomBytes(16).toString('base64');
+  securityHeaders(req, res);
+  try {
+    if (url.pathname === '/api/hello' && req.method === 'GET') {
+      return sendJson(res, 200, {
+        app: 'study-tree',
+        apiVersion: API_VERSION
+      });
     }
-    res.writeHead(204);
-    return res.end();
+
+    /* 使用说明：存在服务器里，前端点击后渲染 */
+    if (url.pathname === '/api/doc' && req.method === 'GET') {
+      let text = '';
+      for (const name of ['使用说明.md', 'README.md']) {
+        try {
+          text = await fsp.readFile(path.join(ROOT, name), 'utf8');
+          if (text) break;
+        } catch (e) { /* 试下一个 */ }
+      }
+      return sendJson(res, 200, {
+        ok: true,
+        title: '使用说明',
+        markdown: text || '# 使用说明\n\n文档还没准备好。'
+      });
+    }
+
+    if (url.pathname.startsWith('/api/auth/')) return await handleAuth(req, res, url);
+
+    if (url.pathname.startsWith('/api/')) {
+      const user = currentUser(req);
+      if (!user) return fail(res, 401, '请先登录');
+      return await handleApi(req, res, url, user);
+    }
+
+    return await serveStatic(req, res, url);
+  } catch (e) {
+    if (e && e.message === 'body-too-large') return fail(res, 413, '文件太大（上限 64MB）');
+    console.error('[study-tree] 请求处理失败：', e && e.message);
+    if (!res.headersSent) return fail(res, 500, '服务器内部错误');
+    res.end();
   }
-  fail(404, '页面不存在');
+});
+
+function localAddresses() {
+  const out = [];
+  const nets = os.networkInterfaces();
+  Object.keys(nets).forEach((name) => {
+    (nets[name] || []).forEach((n) => {
+      if (n.family === 'IPv4' && !n.internal) out.push(n.address);
+    });
+  });
+  return out;
 }
 
-// ---------------------------------------------------------------- 请求分发
+function httpProbe(port, p, timeout = 700) {
+  return new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port, path: p, timeout }, (res) => {
+      let buf = '';
+      res.setEncoding('utf8');
+      res.on('data', (d) => { if (buf.length < 6000) buf += d; });
+      res.on('end', () => resolve({ status: res.statusCode, body: buf }));
+    });
+    req.on('timeout', () => { req.destroy(); resolve(null); });
+    req.on('error', () => resolve(null));
+  });
+}
 
-function matchRoute(method, pathname) {
-  const parts = pathname.split('/').filter(Boolean);
-  for (const route of routes) {
-    if (route.method !== method || route.parts.length !== parts.length) continue;
-    const params = {};
-    let ok = true;
-    for (let i = 0; i < parts.length; i++) {
-      const p = route.parts[i];
-      if (p.startsWith(':')) {
-        try { params[p.slice(1)] = decodeURIComponent(parts[i]); }
-        catch { ok = false; break; }
-      } else if (p !== parts[i]) { ok = false; break; }
-    }
-    if (ok) return { route, params };
+/* 端口被占用时先确认是不是「本应用」。这能避免同一份数据被两个进程各存一份内存副本。 */
+async function probeExisting(port) {
+  const hello = await httpProbe(port, '/api/hello');
+  if (hello && hello.status === 200) {
+    try {
+      const j = JSON.parse(hello.body);
+      if (j && j.app === 'study-tree') {
+        return { kind: 'modern', apiVersion: Number(j.apiVersion) || 0, pid: j.pid };
+      }
+    } catch (e) { /* 不是我们的接口 */ }
+  }
+  const page = await httpProbe(port, '/');
+  if (page && page.status === 200 && page.body.indexOf('TECH TREE CANVAS') > -1) {
+    return { kind: 'legacy' };
   }
   return null;
 }
 
-async function handle(req, res) {
-  securityHeaders(res);
-  const pathname = new URL(req.url, 'http://localhost').pathname;
+function openUrl(url) {
+  if (process.env.NO_OPEN === '1') return;
+  if (process.platform === 'win32') exec(`start "" "${url}"`, () => {});
+}
 
-  if (pathname.startsWith('/api/')) {
-    if (!['GET', 'POST', 'PUT', 'DELETE'].includes(req.method)) fail(405, '方法不允许');
-    if (req.method !== 'GET') requireSameOrigin(req);
-    const matched = matchRoute(req.method, pathname);
-    if (!matched) fail(404, '接口不存在');
-    await matched.route.handler(req, res, matched.params);
+function reportExisting(port, found) {
+  const url = `http://127.0.0.1:${port}`;
+  console.log('');
+  if (found.kind === 'modern' && found.apiVersion >= API_VERSION) {
+    console.log('  已经有一个study-tree在运行：' + url);
+    console.log('  直接用它就行，这个窗口可以关掉。');
+    console.log('');
+    openUrl(url);
+    setTimeout(() => process.exit(0), 400);
     return;
   }
-
-  if (req.method !== 'GET' && req.method !== 'HEAD') fail(405, '方法不允许');
-  await handleStatic(req, res, pathname);
+  console.log('  ⚠ 端口 ' + port + ' 上还有一个【旧版本】的study-tree在跑。');
+  console.log('    旧进程里的账号、管理员、反馈都是它启动那一刻的快照，');
+  console.log('    这就是「没有管理员 / 搜不到好友」的原因。');
+  console.log('');
+  console.log('  请先关掉原来那个黑色启动窗口（或结束 PID ' + (found.pid || '未知') + '），');
+  console.log('  再重新双击 启动.bat。');
+  console.log('');
+  process.exit(2);
 }
 
-async function main() {
-  await initStore();
-  const server = http.createServer((req, res) => {
-    handle(req, res).catch(err => {
-      if (res.headersSent) {
-        try { res.end(); } catch {}
-        return;
-      }
-      sendError(res, err);
-    });
-  });
-  server.headersTimeout = 30_000;
-  server.requestTimeout = 120_000;
-  server.listen(PORT, HOST, () => {
-    console.log(`成长树已启动：http://${HOST}:${PORT}`);
-    console.log(`数据目录：${DATA_DIR}`);
-  });
+function bind(port, onReady, onBusy) {
+  function onError(e) {
+    server.removeListener('listening', onListening);
+    if (e.code === 'EADDRINUSE' && onBusy) return onBusy();
+    console.error('[study-tree] 启动失败：' + e.message);
+    process.exit(1);
+  }
+  function onListening() {
+    server.removeListener('error', onError);
+    onReady(server.address().port);
+  }
+  server.once('error', onError);
+  server.once('listening', onListening);
+  server.listen(port, HOST);
+}
 
-  const cleanup = setInterval(() => {
-    const now = Date.now();
-    let changed = false;
-    for (const t of Object.keys(store.sessions)) {
-      if (!store.sessions[t] || store.sessions[t].exp < now) { delete store.sessions[t]; changed = true; }
+/*
+ * Windows 上两个进程可以同时 bind 0.0.0.0:同端口而不报错（SO_REUSEADDR 语义），
+ * 结果是新实例看起来启动成功、实际请求都进了旧进程，数据也被两份内存各写一遍。
+ * 所以每次启动都先探测端口上是否已经有本应用在应答，绝不盲目 bind。
+ */
+async function start(port, attempt = 0) {
+  if (attempt > 12) {
+    console.error('[study-tree] 启动失败：' + START_PORT + ' 起连续端口都不可用');
+    process.exit(1);
+  }
+
+  const existing = await probeExisting(port);
+  if (existing) return reportExisting(port, existing);
+
+  bind(port, (p) => {
+    const local = `http://127.0.0.1:${p}`;
+    console.log('');
+    console.log('  study-tree 已启动');
+    console.log('  本机打开：' + local);
+    if (HOST === '0.0.0.0') {
+      localAddresses().forEach((ip) => console.log('  同一网络：http://' + ip + ':' + p));
     }
-    if (changed) saveGlobal('sessions').catch(() => {});
-    for (const [k, v] of challenges) if (v.exp < now) challenges.delete(k);
-    for (const key of limits.keys()) pruneLimit(key);
-  }, 10 * 60 * 1000);
-  cleanup.unref();
+    console.log('  数据目录：' + DATA_DIR);
+    console.log('  （关闭这个黑窗口就会停止服务）');
+    console.log('');
+    openUrl(local);
+  }, () => start(port + 1, attempt + 1));
 }
 
-main().catch(err => {
-  console.error('启动失败：', err);
-  process.exit(1);
+/* 进程级兜底：避免一次未捕获异常 / 未处理的 Promise 拒绝让整站直接退出 */
+process.on('unhandledRejection', (reason) => {
+  console.error('[study-tree] 未处理的 Promise 拒绝：', reason && reason.stack ? reason.stack : reason);
 });
+process.on('uncaughtException', (err) => {
+  console.error('[study-tree] 未捕获异常，进程即将退出（由 systemd/守护进程重启）：', err && err.stack ? err.stack : err);
+  setTimeout(() => process.exit(1), 500);
+});
+
+(async () => {
+  try {
+    await ensureDirs();
+    await loadAuth();
+    const pruned = pruneSessions();
+    if (pruned) console.log('[study-tree] 已清理 ' + pruned + ' 个过期会话');
+    setInterval(pruneSessions, 3600 * 1000).unref();
+  } catch (e) {
+    console.error('[study-tree] 初始化失败：' + e.message);
+    process.exit(1);
+  }
+  start(START_PORT);
+})();

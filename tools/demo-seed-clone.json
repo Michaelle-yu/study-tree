@@ -1,0 +1,268 @@
+{
+  "version": 7,
+  "categories": [
+    {
+      "id": "cat_art",
+      "name": "艺术"
+    },
+    {
+      "id": "cat_sport",
+      "name": "运动"
+    },
+    {
+      "id": "cat_study",
+      "name": "学习"
+    }
+  ],
+  "points": 42,
+  "abilities": [
+    {
+      "id": "g_frontend",
+      "name": "前端开发",
+      "cost": 0,
+      "unlocked": false,
+      "kind": "group",
+      "parentId": null,
+      "prereqIds": [],
+      "categoryId": "cat_study",
+      "ox": 0,
+      "oy": 0,
+      "note": "",
+      "photos": []
+    },
+    {
+      "id": "l_html",
+      "name": "HTML 基础",
+      "cost": 3,
+      "unlocked": true,
+      "kind": "leaf",
+      "parentId": "g_frontend",
+      "prereqIds": [],
+      "categoryId": null,
+      "ox": 0,
+      "oy": 10,
+      "note": "标签、语义化与表单。",
+      "photos": []
+    },
+    {
+      "id": "l_css",
+      "name": "CSS 基础",
+      "cost": 2,
+      "unlocked": true,
+      "kind": "leaf",
+      "parentId": "g_frontend",
+      "prereqIds": [
+        "l_html"
+      ],
+      "categoryId": null,
+      "ox": 0,
+      "oy": 40,
+      "note": "选择器、盒模型与布局。",
+      "photos": []
+    },
+    {
+      "id": "l_js",
+      "name": "JavaScript 基础",
+      "cost": 6,
+      "unlocked": false,
+      "kind": "leaf",
+      "parentId": "g_frontend",
+      "prereqIds": [
+        "l_css"
+      ],
+      "categoryId": null,
+      "ox": 0,
+      "oy": 70,
+      "note": "变量、函数、数组与对象。",
+      "photos": []
+    },
+    {
+      "id": "g_design",
+      "name": "平面设计",
+      "cost": 0,
+      "unlocked": false,
+      "kind": "group",
+      "parentId": null,
+      "prereqIds": [],
+      "categoryId": "cat_art",
+      "ox": 0,
+      "oy": 0,
+      "note": "",
+      "photos": []
+    },
+    {
+      "id": "l_color",
+      "name": "色彩构成",
+      "cost": 4,
+      "unlocked": true,
+      "kind": "leaf",
+      "parentId": "g_design",
+      "prereqIds": [],
+      "categoryId": null,
+      "ox": 0,
+      "oy": 10,
+      "note": "色相、明度、纯度与配色。",
+      "photos": []
+    },
+    {
+      "id": "l_layout",
+      "name": "版式设计",
+      "cost": 5,
+      "unlocked": false,
+      "kind": "leaf",
+      "parentId": "g_design",
+      "prereqIds": [
+        "l_color"
+      ],
+      "categoryId": null,
+      "ox": 0,
+      "oy": 40,
+      "note": "网格、留白与视觉层级。",
+      "photos": []
+    },
+    {
+      "id": "g_badminton",
+      "name": "羽毛球",
+      "cost": 0,
+      "unlocked": false,
+      "kind": "group",
+      "parentId": null,
+      "prereqIds": [],
+      "categoryId": "cat_sport",
+      "ox": 0,
+      "oy": 0,
+      "note": "",
+      "photos": []
+    },
+    {
+      "id": "l_grip",
+      "name": "握拍",
+      "cost": 2,
+      "unlocked": true,
+      "kind": "leaf",
+      "parentId": "g_badminton",
+      "prereqIds": [],
+      "categoryId": null,
+      "ox": 0,
+      "oy": 10,
+      "note": "正手与反手握拍转换。",
+      "photos": []
+    },
+    {
+      "id": "l_serve",
+      "name": "发球",
+      "cost": 3,
+      "unlocked": false,
+      "kind": "leaf",
+      "parentId": "g_badminton",
+      "prereqIds": [
+        "l_grip"
+      ],
+      "categoryId": null,
+      "ox": 0,
+      "oy": 40,
+      "note": "高远球发球练习。",
+      "photos": []
+    }
+  ],
+  "files": [
+    {
+      "id": "nf_welcome",
+      "nodeId": "l_html",
+      "name": "欢迎使用.md",
+      "mime": "text/markdown",
+      "size": 520,
+      "storedAs": "seed-welcome-欢迎使用.md",
+      "local": false,
+      "createdAt": 1794825857106
+    },
+    {
+      "id": "nf_plan",
+      "nodeId": "l_js",
+      "name": "学习计划.md",
+      "mime": "text/markdown",
+      "size": 300,
+      "storedAs": "seed-plan-学习计划.md",
+      "local": false,
+      "createdAt": 1794908657106
+    }
+  ],
+  "exp": 90,
+  "tasks": [
+    {
+      "id": "t1",
+      "name": "背单词",
+      "points": 5,
+      "done": true,
+      "doneAt": 1794912188661
+    },
+    {
+      "id": "t2",
+      "name": "复习 CSS",
+      "points": 2,
+      "done": false,
+      "doneAt": 0
+    }
+  ],
+  "week": {
+    "key": "2026W47"
+  },
+  "timer": {
+    "rate": 50,
+    "courses": [],
+    "plans": [],
+    "spent": 0,
+    "bonus": 5,
+    "weekKey": "2026W47",
+    "weeks": {
+      "2026W47": {
+        "courses": [
+          {
+            "id": "c1",
+            "day": 1,
+            "start": 480,
+            "end": 570,
+            "title": "高等数学"
+          },
+          {
+            "id": "c2",
+            "day": 3,
+            "start": 480,
+            "end": 600,
+            "title": "高等数学"
+          },
+          {
+            "id": "c3",
+            "day": 5,
+            "start": 600,
+            "end": 690,
+            "title": "数据结构"
+          }
+        ],
+        "plans": [
+          {
+            "id": "p1",
+            "days": [
+              2,
+              4
+            ],
+            "start": 1140,
+            "end": 1200,
+            "title": "自习",
+            "break": false
+          },
+          {
+            "id": "p2",
+            "days": [
+              1
+            ],
+            "start": 570,
+            "end": 600,
+            "title": "课间",
+            "break": true
+          }
+        ]
+      }
+    }
+  }
+}

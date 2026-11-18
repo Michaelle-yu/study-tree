@@ -1,6 +1,30 @@
+# study-tree · Git 忽略规则（学习树）
+# 下面的内容不会提交到 GitHub：账号数据、会话、工作区记忆、依赖、二进制工具、日志、临时文件。
+
+# 数据、账号与密钥 —— 绝不提交
+/data/
+
+# 工作区内部目录
+/.workbuddy/
+
+# 依赖与运行时
+node_modules/
+
+# 二进制与工具
+cloudflared.exe
+config.yml
+
+# 日志与备份
+*.log
+*.tgz
+
+# 临时测试目录
+/.t*/
+
+# 系统文件
+.DS_Store
+Thumbs.db
+
+# 站点构建产物与发布描述
 dist/
 *.qoder.site
-.qoder/
-data/
-node_modules/
-*.log
