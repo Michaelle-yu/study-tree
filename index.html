@@ -569,13 +569,27 @@
     border-right:1px solid rgba(122,152,200,.14);
     -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
   }
-  .rail-head{display:none}
-  .rail-item{position:absolute;left:12px;right:12px;will-change:top}
-  .rail-item .card{position:relative !important;left:auto !important;top:auto !important;width:100%;height:auto;min-height:100px;cursor:grab;padding:10px 11px 9px 13px;gap:5px}
+  .rail-head{
+    position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:7px;
+    padding:10px 12px 9px;background:rgba(7,12,21,.94);
+    -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
+    border-bottom:1px solid rgba(122,152,200,.1);
+  }
+  .rail-head b{font-size:11px;letter-spacing:1.5px;color:#7f93b0;font-weight:600}
+  .rail-n{font-family:var(--mono);font-size:10px;color:#4f6480}
+  .rail-sort{
+    margin-left:auto;padding:3px 9px;border-radius:7px;font-size:11px;cursor:pointer;
+    border:1px solid rgba(122,152,200,.2);background:transparent;color:#7f93b0;transition:.15s;
+  }
+  .rail-sort:hover{color:#cfdcef;border-color:rgba(122,152,200,.42)}
+  .rail.edit .rail-sort{color:#9fe1cb;border-color:rgba(94,234,212,.45);background:rgba(94,234,212,.08)}
+  .rail-item{position:absolute;left:12px;right:12px}
+  .rail-item .card{position:relative !important;left:auto !important;top:auto !important;width:100%;height:auto;min-height:100px;cursor:pointer;padding:10px 11px 9px 13px;gap:5px}
+  .rail.edit .rail-item .card{cursor:grab}
   .rail-item .card .card-name{font-size:13px;line-height:1.25}
   .rail-item .card .card-id{font-size:8.5px}
   .rail-item .card .card-cost b{font-size:14px}
-  .rail-item .card:active{cursor:grabbing}
+  .rail.edit .rail-item .card:active{cursor:grabbing}
   .rail-item .card.card-group{box-shadow:0 14px 34px -26px rgba(56,189,248,.95), inset 0 0 26px -16px rgba(56,189,248,.5)}
   .rail-item.dragging .card{box-shadow:0 20px 40px -20px rgba(0,0,0,.9),0 0 0 1px rgba(94,234,212,.6)}
   .rail-empty{padding:18px 14px;font-size:12px;color:#5d7090;line-height:1.8;text-align:center}
@@ -990,6 +1004,7 @@
     .tasks-head{font-size:11.5px}
     .rail{left:0;right:0;top:102px;bottom:auto;width:auto;height:172px;border-right:0;
       border-bottom:1px solid rgba(122,152,200,.14);white-space:nowrap;overflow-x:auto;overflow-y:hidden}
+    .rail-head{display:none}
     .rail-item{position:absolute;width:212px}
     .rail-item .card{min-height:0}
     .stage{left:0;top:274px}
@@ -1104,6 +1119,7 @@
       border-right:0;border-bottom:1px solid rgba(122,152,200,.14);
       white-space:nowrap;overflow-x:auto;overflow-y:hidden;
     }
+    .rail-head{display:none}
     .rail-item{width:172px}
     .rail-item .card{min-height:0;padding:9px 10px}
     .rail-item .card-name{font-size:12px}
@@ -1241,7 +1257,8 @@
 <div class="rail" id="rail">
   <div class="rail-head">
     <b>能力</b>
-    <span id="rail-count">0</span>
+    <span id="rail-count" class="rail-n">0</span>
+    <button class="rail-sort" id="rail-sort" type="button" title="开启后可编辑顺序：拖动条目排序，拖到左侧分类可迁移">排序</button>
   </div>
   <div id="rail-inner"></div>
 </div>
@@ -2410,7 +2427,6 @@
   var savedCat = null;
   var viewingUser = null;
   var guestTimerHidden = false;
-  var railAlign = {};
   var lastLayout = { placed: [], blocks: [] };
   var saveTimer = null;
   var lastSaved = null;
@@ -2764,13 +2780,9 @@
     var arr = [];
     railBlocks.forEach(function (b) {
       var node = railItems[b.id];
-      if (!node) return;
-      arr.push({
-        el: node,
-        top: view.y + (b.center + (railAlign[b.id] || 0)) * view.k - (node.offsetHeight || 140) / 2
-      });
+      if (node) arr.push({ el: node });
     });
-    if (!arr.length) return;
+    if (!arr.length) { $railInner.style.height = ''; return; }
 
     if (window.innerWidth <= 760) {
       var left = 12;
@@ -2784,47 +2796,15 @@
       return;
     }
 
-    var boxH = $rail.clientHeight || 600;
-
-    // 内容总高：放得下就让父级跟着画布上下走，放不下就切成紧凑列表并允许滚动
-    var total = 0;
-    arr.forEach(function (x) { total += (x.el.offsetHeight || 140) + 10; });
-    total = Math.max(0, total - 10) + 12;
-
-    if (total > boxH) {
-      var cursor = 6;
-      $railInner.style.height = total + 'px';
-      arr.forEach(function (x) {
-        x.el.style.left = '12px';
-        x.el.style.right = '12px';
-        x.el.style.top = cursor + 'px';
-        cursor += (x.el.offsetHeight || 140) + 10;
-      });
-      return;
-    }
-
-    $railInner.style.height = '';
-    arr.forEach(function (x) {
-      var ch = x.el.offsetHeight || 140;
-      x.top = Math.max(6, Math.min(x.top, boxH - ch - 6));
-    });
-    arr.sort(function (a, b) { return a.top - b.top; });
-    var cur = 6;
-    arr.forEach(function (x) {
-      x.top = Math.max(x.top, cur);
-      cur = x.top + (x.el.offsetHeight || 140) + 10;
-    });
-    var over = cur - 10 - boxH;
-    if (over > 0) {
-      var minTop = arr.length ? Math.min.apply(null, arr.map(function (x) { return x.top; })) : 6;
-      var shift = Math.min(over, Math.max(0, minTop - 6));
-      arr.forEach(function (x) { x.top -= shift; });
-    }
+    // 稳定纵列：根节点同列、等间距堆叠，不随画布平移/缩放跳动
+    var cursor = 6;
     arr.forEach(function (x) {
       x.el.style.left = '12px';
       x.el.style.right = '12px';
-      x.el.style.top = Math.round(x.top) + 'px';
+      x.el.style.top = cursor + 'px';
+      cursor += (x.el.offsetHeight || 140) + 10;
     });
+    $railInner.style.height = cursor + 'px';
   }
 
   /* 合并重绘：同一帧内多次 render() 只执行一次真正的 renderNow() */
@@ -4444,7 +4424,6 @@
     var b = null;
     (railBlocks || []).forEach(function (x) { if (x.id === id) b = x; });
     if (!b) return;
-    railAlign[id] = 0;
     var rect = $stage.getBoundingClientRect();
     var targetK = clamp(Math.min(1, (rect.height - 90) / Math.max(240, b.height + 60)), 0.55, 1);
     var targetX = 40 - PAD * targetK;
@@ -4460,12 +4439,6 @@
     var k = view.k;
     var rect = $stage.getBoundingClientRect();
     var cy = p.y + CARD_H / 2;
-    var parentId = p.node.parentId;
-    if (parentId) {
-      var b = null;
-      (railBlocks || []).forEach(function (x) { if (x.id === parentId) b = x; });
-      if (b) railAlign[parentId] = cy - b.center;
-    }
     tweenView(48 - p.x * k, rect.height / 2 - cy * k, k);
   }
 
@@ -5713,7 +5686,6 @@
     $guestBar.hidden = true;
     document.body.classList.remove('guest-mode');
     setTopbarIdentity(currentUser);
-    railAlign = {};
     render();
     renderTasks();
     refreshDataPanel();
@@ -6268,6 +6240,7 @@
 
   /* ---------------- 父级拖动（纵向排序 / 拖到别的分类） ---------------- */
   var railDrag = null;
+  var railEdit = false;
 
   function subtreeIds(id) {
     var out = [id], guard = 0;
@@ -6286,6 +6259,7 @@
 
   function railMove(e) {
     if (!railDrag) return;
+    if (!railEdit) return;
     var dy = e.clientY - railDrag.sy;
     if (!railDrag.moved && Math.abs(dy) < 5) return;
     if (!railDrag.moved) {
@@ -6339,7 +6313,7 @@
       toast('已移到「' + ((catById(d.dropCat) || {}).name || '') + '」');
       return;
     }
-    reorderByY(d.id, e.clientY);
+    reorderByDrop(d.id, e.clientY);
   }
 
   $railInner.addEventListener('pointerdown', function (e) {
@@ -6362,16 +6336,23 @@
     window.addEventListener('pointerup', railUp);
   });
 
-  function reorderByY(id, clientY) {
-    var rect = $stage.getBoundingClientRect();
-    var worldY = (clientY - rect.top - view.y) / view.k;
-    var centerById = {};
-    (railBlocks || []).forEach(function (b) { centerById[b.id] = b.center; });
+  var $railSort = document.getElementById('rail-sort');
+  $railSort.addEventListener('click', function () {
+    railEdit = !railEdit;
+    $rail.classList.toggle('edit', railEdit);
+    $railSort.textContent = railEdit ? '完成' : '排序';
+    toast(railEdit ? '排序模式：上下拖动调整顺序，拖到左侧分类可迁移' : '已退出排序模式');
+  });
+
+  function reorderByDrop(id, clientY) {
     var ids = groupsOfCat(currentCat).map(function (r) { return r.id; }).filter(function (x) { return x !== id; });
-    var idx = ids.length;
-    for (var i = 0; i < ids.length; i++) {
-      if (worldY < (centerById[ids[i]] || 0)) { idx = i; break; }
-    }
+    var idx = 0;
+    ids.forEach(function (other) {
+      var item = railItems[other];
+      if (!item) return;
+      var r = item.getBoundingClientRect();
+      if (clientY > r.top + r.height / 2) idx++;
+    });
     ids.splice(idx, 0, id);
     applyRootOrder(ids);
     saveNow();
