@@ -522,8 +522,6 @@
   .tasks-note{font-family:var(--mono);font-size:9.5px;color:#42556f;letter-spacing:.06em}
 
   /* ---------- 前置关系 ---------- */
-  .card[data-root="1"]{cursor:grab}
-  .stage.is-dragging-card .card[data-root="1"]{cursor:grabbing}
   .card-prereq{
     font-family:var(--mono);font-size:9.5px;letter-spacing:.03em;color:#6b7d99;
     white-space:nowrap;overflow:hidden;text-overflow:ellipsis;margin-top:-3px;
@@ -561,7 +559,7 @@
   }
   .cat-add:hover{color:#a9bcd6;border-color:rgba(122,152,200,.45)}
 
-  /* ---------- 左侧父级栏 ---------- */
+  /* ---------- 左侧能力目录 ---------- */
   .rail{
     position:fixed;left:104px;top:56px;bottom:0;width:252px;z-index:30;
     overflow-y:auto;overflow-x:hidden;
@@ -583,27 +581,52 @@
   }
   .rail-sort:hover{color:#cfdcef;border-color:rgba(122,152,200,.42)}
   .rail.edit .rail-sort{color:#9fe1cb;border-color:rgba(94,234,212,.45);background:rgba(94,234,212,.08)}
+  /* 左栏是「目录」：能力卡本体画在画布里，这里只做导航 + 排序 */
   .rail-item{position:absolute;left:12px;right:12px}
-  .rail-item .card{position:relative !important;left:auto !important;top:auto !important;width:100%;height:auto;min-height:100px;cursor:pointer;padding:10px 11px 9px 13px;gap:5px}
-  .rail.edit .rail-item .card{cursor:grab}
-  .rail-item .card .card-name{font-size:13px;line-height:1.25}
-  .rail-item .card .card-id{font-size:8.5px}
-  .rail-item .card .card-cost b{font-size:14px}
-  .rail.edit .rail-item .card:active{cursor:grabbing}
-  .rail-item .card.card-group{box-shadow:0 14px 34px -26px rgba(56,189,248,.95), inset 0 0 26px -16px rgba(56,189,248,.5)}
-  .rail-item.dragging .card{box-shadow:0 20px 40px -20px rgba(0,0,0,.9),0 0 0 1px rgba(94,234,212,.6)}
+  .ri{
+    display:flex;align-items:center;gap:10px;width:100%;
+    padding:8px 11px 8px 10px;border-radius:12px;cursor:pointer;
+    background:linear-gradient(160deg, rgba(20,32,54,.9), rgba(11,18,31,.9));
+    border:1px solid rgba(122,152,200,.14);
+    border-left:2px solid var(--ring,#38bdf8);
+    transition:border-color .18s, background .18s, transform .12s;
+  }
+  .ri:hover{
+    border-color:rgba(122,152,200,.3);border-left-color:var(--ring,#38bdf8);
+    background:linear-gradient(160deg, rgba(24,40,64,.95), rgba(12,20,34,.95));
+  }
+  .ri:active{transform:scale(.985)}
+  .rail.edit .ri{cursor:grab}
+  .rail.edit .ri:active{cursor:grabbing}
+  .rail-item.dragging .ri{border-color:rgba(94,234,212,.6);box-shadow:0 18px 36px -20px rgba(0,0,0,.9)}
+  .ri-ring{
+    position:relative;flex:0 0 auto;width:34px;height:34px;border-radius:50%;
+    display:grid;place-items:center;
+    background:conic-gradient(var(--ring,#5eead4) calc(var(--p,0) * 1%), rgba(122,152,200,.16) 0);
+  }
+  .ri-ring::after{content:"";position:absolute;inset:3px;border-radius:50%;background:#0a1120}
+  .ri-ring i{position:relative;font-style:normal;font-family:var(--mono);font-size:9.5px;color:#b9c9e2}
+  .ri-body{flex:1 1 auto;min-width:0}
+  .ri-name{
+    display:block;font-size:13px;font-weight:600;line-height:1.3;color:#e9f0fb;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .ri-meta{
+    display:block;margin-top:3px;font-size:10.5px;line-height:1.35;color:#6b7d99;
+    overflow:hidden;text-overflow:ellipsis;white-space:nowrap;
+  }
+  .ri-dot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:#33405a}
+  .ri-dot.on{background:var(--mint);box-shadow:0 0 8px rgba(52,211,153,.75)}
+  .ri-dot.ready{background:var(--amber);box-shadow:0 0 8px rgba(245,185,66,.65)}
+  /* 悬停目录条目时，画布里对应的能力卡亮起，明确「这一堆属于谁」 */
+  .card.is-focus{
+    z-index:4;border-color:rgba(56,189,248,.6);
+    outline:1px solid rgba(56,189,248,.55);outline-offset:2px;
+  }
   .rail-empty{padding:18px 14px;font-size:12px;color:#5d7090;line-height:1.8;text-align:center}
   .rail::-webkit-scrollbar{height:6px}
   .rail::-webkit-scrollbar-thumb{background:rgba(122,152,200,.25);border-radius:3px}
   .rail::-webkit-scrollbar-track{background:transparent}
-
-  #links{
-    position:fixed;left:0;top:56px;width:100vw;height:calc(100vh - 56px);z-index:20;
-    pointer-events:none;overflow:visible;
-  }
-  #links path{fill:none;stroke:rgba(96,165,250,.34);stroke-width:1.3}
-  #links path.bus{stroke:rgba(96,165,250,.2)}
-  #links path.hot{stroke:rgba(94,234,212,.6);stroke-width:1.6}
 
   /* ---------- 登录 ---------- */
   .auth{position:fixed;inset:0;z-index:120;display:flex;align-items:center;justify-content:center;padding:22px;
@@ -681,10 +704,8 @@
   .guest-bar span{flex:1 1 auto;min-width:0}
   body.guest-mode .cats,body.guest-mode .rail{top:92px}
   body.guest-mode .stage{top:92px}
-  body.guest-mode #links{top:92px;height:calc(100vh - 92px)}
 
   .wires .wire-hot path{stroke:rgba(94,234,212,.8);stroke-width:1.9}
-  #links path.hot{stroke:rgba(94,234,212,.62);stroke-width:1.7}
 
   /* ---------- 管理员 / 反馈 ---------- */
   .me-acts{display:flex;gap:8px;margin-top:14px}
@@ -966,9 +987,8 @@
 
   @media (max-width:900px){
     .cats{width:92px;padding:10px 6px}
-    .rail{left:92px;width:208px}
-    .stage{left:300px}
-    .rail-item .card{min-height:120px}
+    .rail{left:92px;width:204px}
+    .stage{left:296px}
   }
   @media (max-width:620px){
     .brand-sub{display:none}
@@ -1002,17 +1022,7 @@
     .fb-acts button{font-size:11px}
     .me-acts button{font-size:11.5px;padding:7px 4px}
     .tasks-head{font-size:11.5px}
-    .rail{left:0;right:0;top:102px;bottom:auto;width:auto;height:172px;border-right:0;
-      border-bottom:1px solid rgba(122,152,200,.14);white-space:nowrap;overflow-x:auto;overflow-y:hidden}
-    .rail-head{display:none}
-    .rail-item{position:absolute;width:212px}
-    .rail-item .card{min-height:0}
-    .stage{left:0;top:274px}
-    #links{left:0;top:274px;height:calc(100vh - 274px)}
-    body.guest-mode .cats{top:92px}
-    body.guest-mode .rail{top:138px}
-    body.guest-mode .stage{top:310px}
-    body.guest-mode #links{top:310px;height:calc(100vh - 310px)}
+    /* 左栏/画布在窄屏的排布统一交给后面的 760px 断点（更靠后的规则会覆盖这里） */
   }
 
   @media (max-width:560px){
@@ -1035,7 +1045,6 @@
   /* ============ 视觉优化（覆盖层，不改变任何功能逻辑） ============ */
   /* 连线：已点亮路径用青绿渐变发光 */
   .wires .wire-hot path{stroke:url(#wireGrad);stroke-width:2;filter:drop-shadow(0 0 3px rgba(94,234,212,.55))}
-  #links path.hot{stroke:url(#wireGrad);stroke-width:2;filter:drop-shadow(0 0 4px rgba(94,234,212,.5))}
   /* 卡片：圆角更柔和 + hover 抬升（注意：不 transition transform，避免干扰拖动） */
   .card{border-radius:14px;transition:box-shadow .35s cubic-bezier(.22,1,.36,1),border-color .35s}
   .card:hover{transform:translateY(-3px);border-color:rgba(122,152,200,.32);box-shadow:0 16px 40px -20px rgba(0,0,0,.8),0 0 0 1px rgba(122,152,200,.12)}
@@ -1115,26 +1124,19 @@
     .cat-name{max-width:64px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 
     .rail{
-      left:0;right:0;top:96px;bottom:auto;width:auto;height:140px;padding:6px 8px;
+      left:0;right:0;top:96px;bottom:auto;width:auto;height:64px;padding:6px 8px;
       border-right:0;border-bottom:1px solid rgba(122,152,200,.14);
       white-space:nowrap;overflow-x:auto;overflow-y:hidden;
     }
     .rail-head{display:none}
-    .rail-item{width:172px}
-    .rail-item .card{min-height:0;padding:9px 10px}
-    .rail-item .card-name{font-size:12px}
+    .rail-item{width:168px}
 
-    .stage{left:0;top:236px}
-    #links{left:0;top:236px;height:calc(100dvh - 236px)}
+    .stage{left:0;top:160px}
     .banner{top:54px}
 
     body.guest-mode .cats{top:calc(54px + var(--guest-h, 44px))}
     body.guest-mode .rail{top:calc(96px + var(--guest-h, 44px))}
-    body.guest-mode .stage{top:calc(236px + var(--guest-h, 44px))}
-    body.guest-mode #links{
-      top:calc(236px + var(--guest-h, 44px));
-      height:calc(100dvh - 236px - var(--guest-h, 44px));
-    }
+    body.guest-mode .stage{top:calc(160px + var(--guest-h, 44px))}
 
     .drawer{top:54px;width:100%;max-width:100%}
     .drawer-body{padding-bottom:calc(18px + env(safe-area-inset-bottom))}
@@ -1256,14 +1258,12 @@
 
 <div class="rail" id="rail">
   <div class="rail-head">
-    <b>能力</b>
+    <b>能力目录</b>
     <span id="rail-count" class="rail-n">0</span>
     <button class="rail-sort" id="rail-sort" type="button" title="开启后可编辑顺序：拖动条目排序，拖到左侧分类可迁移">排序</button>
   </div>
   <div id="rail-inner"></div>
 </div>
-
-<svg id="links" xmlns="http://www.w3.org/2000/svg"></svg>
 
 <div class="stage" id="stage">
   <div class="world" id="world"></div>
@@ -1965,7 +1965,6 @@
   var $rail = document.getElementById('rail');
   var $railInner = document.getElementById('rail-inner');
   var $railCount = document.getElementById('rail-count');
-  var $links = document.getElementById('links');
   var $catList = document.getElementById('cat-list');
   var $cats = document.getElementById('cats');
   var $auth = document.getElementById('auth');
@@ -2530,21 +2529,12 @@
   var view = { x: 0, y: 0, k: 1 };
   var worldSize = { w: 800, h: 600 };
 
+  /* 平移/缩放只改一个 transform：能力卡和连线都在世界层里，跟着一起动，
+     所以这里每帧零重排（以前要用 getBoundingClientRect 重画屏幕层连线） */
   function applyView() {
     $world.style.transform = 'translate(' + view.x + 'px,' + view.y + 'px) scale(' + view.k + ')';
     $stage.style.backgroundSize = (28 * view.k) + 'px ' + (28 * view.k) + 'px';
     $stage.style.backgroundPosition = view.x + 'px ' + view.y + 'px';
-    positionRail();
-    scheduleLinks();
-  }
-
-  var linkRaf = 0;
-  function scheduleLinks() {
-    if (linkRaf) return;
-    linkRaf = requestAnimationFrame(function () {
-      linkRaf = 0;
-      drawLinks();
-    });
   }
 
   function clamp(n, a, b) { return n < a ? a : (n > b ? b : n); }
@@ -2680,10 +2670,14 @@
         y += CARD_H + ROOT_GAP;
         return;
       }
-      var box = layoutChildren(root.id, PAD, y);
-      var h = box.h > 0 ? box.h : 0;
-      blocks.push({ id: root.id, top: y, height: h, center: y + Math.max(h, CARD_H) / 2 });
-      y += Math.max(h, CARD_H) + ROOT_GAP;
+      /* 能力卡本体也画在世界层：占据最左一列，知识点从第二列开始，
+         这样「能力 → 知识点」的连线和其他连线一样都在画布里，平移时不会脱节 */
+      var box = layoutChildren(root.id, PAD + CARD_W + COL_GAP, y);
+      var h = box.h > 0 ? box.h : CARD_H;
+      var gy = y + Math.max(0, (h - CARD_H) / 2);
+      placed.push({ node: root, x: PAD, y: gy, group: true, root: true });
+      blocks.push({ id: root.id, top: y, height: h, center: gy + CARD_H / 2 });
+      y += h + ROOT_GAP;
     });
 
     var maxRight = PAD + CARD_W, maxBottom = PAD + CARD_H;
@@ -2776,6 +2770,56 @@
     });
   }
 
+  /* 目录条目：进度环 + 名称 + 小时数 + 状态点。能力卡本体在画布里，这里只负责导航 */
+  function buildRailItem(r) {
+    var kids = childrenOf(r.id);
+    var done = kids.filter(function (k) { return k.unlocked; }).length;
+    var pct = kids.length ? Math.round(done / kids.length * 100) : 0;
+    var total = groupTotal(r.id);
+    var remaining = groupRemaining(r.id);
+
+    var item = el('div', 'rail-item');
+    item.setAttribute('data-rail', r.id);
+
+    var row = el('button', 'ri');
+    row.type = 'button';
+    row.title = r.name + ' · 共 ' + total + ' 小时 · ' + done + '/' + kids.length +
+      ' 已点亮 · 点它定位到画布';
+    row.style.setProperty('--ring', catColor(r.categoryId));
+    row.style.setProperty('--p', String(pct));
+
+    var ring = el('div', 'ri-ring');
+    ring.appendChild(el('i', '', kids.length ? done + '/' + kids.length : '0'));
+    row.appendChild(ring);
+
+    var body = el('div', 'ri-body');
+    body.appendChild(el('span', 'ri-name', r.name));
+    body.appendChild(el('span', 'ri-meta', !kids.length
+      ? '空能力 · 待添加'
+      : (remaining ? '还剩 ' + remaining + ' 小时' : '已全部点亮')));
+    row.appendChild(body);
+
+    var allDone = !!kids.length && done === kids.length;
+    var canBuy = remaining > 0 && remaining <= state.points;
+    row.appendChild(el('span', 'ri-dot' + (allDone ? ' on' : (canBuy ? ' ready' : ''))));
+
+    item.appendChild(row);
+    return item;
+  }
+
+  var railFocusId = null;
+  function setRailFocus(id) {
+    if (railFocusId === id) return;
+    if (railFocusId) {
+      var prev = $world.querySelector('[data-node="' + railFocusId + '"]');
+      if (prev) prev.classList.remove('is-focus');
+    }
+    railFocusId = id;
+    if (!id) return;
+    var cur = $world.querySelector('[data-node="' + id + '"]');
+    if (cur) cur.classList.add('is-focus');
+  }
+
   function positionRail() {
     var arr = [];
     railBlocks.forEach(function (b) {
@@ -2785,26 +2829,29 @@
     if (!arr.length) { $railInner.style.height = ''; return; }
 
     if (window.innerWidth <= 760) {
-      var left = 12;
+      var left = 8;
       arr.forEach(function (x) {
-        var w = x.el.offsetWidth || 212;
+        var w = x.el.offsetWidth || 168;
         x.el.style.left = left + 'px';
         x.el.style.right = 'auto';
-        x.el.style.top = '10px';
-        left += w + 10;
+        x.el.style.top = '6px';
+        left += w + 8;
       });
+      $railInner.style.height = '';
       return;
     }
 
-    // 稳定纵列：根节点同列、等间距堆叠，不随画布平移/缩放跳动
-    var cursor = 6;
+    /* 条目是绝对定位的，定位基准是 .rail 而不是 #rail-inner，
+       所以要跳过 sticky 头部的高度，否则第一条会被压在标题下面 */
+    var head = $railInner.offsetTop || 0;
+    var cursor = head + 8;
     arr.forEach(function (x) {
       x.el.style.left = '12px';
       x.el.style.right = '12px';
       x.el.style.top = cursor + 'px';
-      cursor += (x.el.offsetHeight || 140) + 10;
+      cursor += (x.el.offsetHeight || 52) + 8;
     });
-    $railInner.style.height = cursor + 'px';
+    $railInner.style.height = (cursor - head) + 'px';
   }
 
   /* 合并重绘：同一帧内多次 render() 只执行一次真正的 renderNow() */
@@ -2829,7 +2876,7 @@
     lastLayout = layout;
     worldSize = { w: layout.width, h: layout.height };
 
-    // 左栏：只放父级（group）；没有父级的知识点直接画在画布上
+    // 左栏：当前分类的能力目录（能力卡本体已经画进画布世界层）
     var roots = groupsOfCat(currentCat);
     $railInner.textContent = '';
     $railCount.textContent = String(roots.length);
@@ -2837,9 +2884,7 @@
     railBlocks = layout.blocks || [];
 
     roots.forEach(function (r) {
-      var item = el('div', 'rail-item');
-      item.setAttribute('data-rail', r.id);
-      item.appendChild(buildCard({ node: r, x: 0, y: 0, root: true, rail: true }));
+      var item = buildRailItem(r);
       $railInner.appendChild(item);
       railItems[r.id] = item;
     });
@@ -2866,7 +2911,7 @@
 
     var branchPaths = '', chainPaths = '', hotBranch = '', hotChain = '', dots = '';
 
-    // 画布内的分支：只画非根节点之间（根节点在左侧栏，用另一层连线）
+    // 分支连线：父级 → 它的入口知识点（能力卡也在世界层，所以根节点这一段同样在这里画）
     state.abilities.forEach(function (n) {
       var kids = childrenOf(n.id);
       if (!kids.length) return;
@@ -2885,9 +2930,23 @@
         var kp = pos[k.id];
         if (!kp) return;
         var x2 = kp.x, y2 = kp.y + CARD_H / 2;
-        var dx = Math.max(36, (x2 - x1) * 0.55);
-        var seg = 'M' + r1(x1) + ' ' + r1(y1) +
-          ' C' + r1(x1 + dx) + ' ' + r1(y1) + ',' + r1(x2 - dx) + ' ' + r1(y2) + ',' + r1(x2) + ' ' + r1(y2);
+        var gap = x2 - x1;
+        var seg;
+        if (Math.abs(y2 - y1) > 58 && gap >= 40) {
+          /* 上下落差大（能力卡对着整块知识点的中间）：走两列之间的竖向总线，
+             不要拉出一条几乎垂直、还从卡片背后穿过的曲线 */
+          var laneX = x1 + Math.min(30, Math.max(18, gap * 0.45));
+          seg = roundedPath([
+            { x: x1, y: y1 },
+            { x: laneX, y: y1 },
+            { x: laneX, y: y2 },
+            { x: x2, y: y2 }
+          ], 12);
+        } else {
+          var dx = Math.max(36, gap * 0.55);
+          seg = 'M' + r1(x1) + ' ' + r1(y1) +
+            ' C' + r1(x1 + dx) + ' ' + r1(y1) + ',' + r1(x2 - dx) + ' ' + r1(y2) + ',' + r1(x2) + ' ' + r1(y2);
+        }
         if (k.unlocked) hotBranch += seg; else branchPaths += seg;
       });
     });
@@ -2936,14 +2995,19 @@
 
     layout.placed.forEach(function (p) { $world.appendChild(buildCard(p)); });
 
+    /* 重绘会换掉卡片元素，鼠标还停在目录上时要把高亮补回去 */
+    if (railFocusId) {
+      var fc = $world.querySelector('[data-node="' + railFocusId + '"]');
+      if (fc) fc.classList.add('is-focus');
+      else railFocusId = null;
+    }
+
     if (!layout.placed.length) {
       var ph = el('div', 'canvas-empty');
       ph.style.left = PAD + 'px';
       ph.style.top = PAD + 'px';
-      ph.appendChild(el('b', '', roots.length ? '还没有知识点' : '画布是空的'));
-      ph.appendChild(document.createTextNode(roots.length
-        ? '点左侧能力卡片，用「＋ 新增」添加知识点。'
-        : '点右上角「＋ 新增」，先建一个能力。'));
+      ph.appendChild(el('b', '', '画布是空的'));
+      ph.appendChild(document.createTextNode('点右上角「＋ 新增」，先建一个能力。'));
       var sub = el('span', '', 'EMPTY CANVAS · 也可以先导入别人的文件');
       sub.style.display = 'block';
       sub.style.marginTop = '10px';
@@ -2954,61 +3018,6 @@
     renderHud();
     refreshBadges();
     positionRail();
-    drawLinks();
-  }
-
-  /* 左侧栏 → 画布 的连线（视口坐标系，不随画布缩放） */
-  function drawLinks() {
-    if (!$links || !$rail) return;
-    var box = $links.getBoundingClientRect();
-    var parts = [], hot = [];
-
-    state.abilities.forEach(function (r) {
-      if (r.parentId) return;
-      var kids = childrenOf(r.id);
-      if (!kids.length) return;
-      var cardEl = $railInner.querySelector('[data-node="' + r.id + '"]');
-      if (!cardEl) return;
-
-      var rr = cardEl.getBoundingClientRect();
-      var x1 = rr.right - box.left;
-      var y1 = rr.top + rr.height / 2 - box.top;
-
-      var kidIds = {};
-      kids.forEach(function (k) { kidIds[k.id] = true; });
-      var heads = kids.filter(function (k) {
-        return !(k.prereqIds || []).some(function (id) { return kidIds[id]; });
-      });
-      if (!heads.length) heads = [kids[0]];
-
-      var targets = [];
-      heads.forEach(function (k) {
-        var kel = $world.querySelector('[data-node="' + k.id + '"]');
-        if (!kel) return;
-        var kr = kel.getBoundingClientRect();
-        var x2 = kr.left - box.left;
-        var y2 = kr.top + kr.height / 2 - box.top;
-        targets.push({ x: x2, y: y2, hot: k.unlocked });
-      });
-      if (!targets.length) return;
-
-      // 每个子节点一条独立平滑曲线，从父级右缘自然弯曲到子节点左缘
-      targets.forEach(function (t) {
-        var dx = t.x - x1;
-        var cx1 = x1 + dx * 0.45;
-        var cy1 = y1;
-        var cx2 = x1 + dx * 0.55;
-        var cy2 = t.y;
-        var seg = 'M' + r1(x1) + ' ' + r1(y1) +
-          ' C' + r1(cx1) + ' ' + r1(cy1) + ',' + r1(cx2) + ' ' + r1(cy2) + ',' + r1(t.x) + ' ' + r1(t.y);
-        (t.hot ? hot : parts).push(seg);
-      });
-    });
-
-    var out = '<defs><linearGradient id="wireGrad" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#38bdf8"/><stop offset="1" stop-color="#34d399"/></linearGradient></defs>';
-    if (parts.length) out += '<path d="' + parts.join(' ') + '"/>';
-    if (hot.length) out += '<path class="hot" d="' + hot.join(' ') + '"/>';
-    $links.innerHTML = out;
   }
 
   function prereqsOf(node) {
@@ -3047,10 +3056,8 @@
     var card = el('div', 'card ' + (isGroup ? 'card-group ' : '') + st.cls);
     card.setAttribute('data-node', node.id);
     if (canvasSel[node.id]) card.className += ' is-sel';
-    if (!p.rail) {
-      card.style.left = p.x + 'px';
-      card.style.top = p.y + 'px';
-    }
+    card.style.left = p.x + 'px';
+    card.style.top = p.y + 'px';
 
     card.appendChild(el('div', 'card-id', (isGroup ? 'GROUP_' : 'LEAF_') + pad3(indexOf(node.id))));
 
@@ -4142,7 +4149,9 @@
       var nid = card.getAttribute('data-node');
       /* Ctrl+点 = 多选/取消选，不打开编辑抽屉 */
       if (isCtrl) { toggleCanvasSel(nid, card); return; }
-      focusNode(nid);
+      /* 能力卡：把整块（能力 + 它下面的知识点）框进视野；知识点：只居中自己 */
+      var hit = findNode(nid);
+      if (hit && hit.kind === 'group') focusBlock(nid); else focusNode(nid);
       openEditor(nid);
       return;
     }
@@ -4250,16 +4259,6 @@
     zoomAt(r.left + r.width / 2, r.top + r.height / 2, view.k / 1.2);
   });
   document.getElementById('zoom-fit').addEventListener('click', fitView);
-
-  // 左栏只让按钮走 click；卡片本身交给 pointerdown/up 的拖动判定
-  $rail.addEventListener('scroll', scheduleLinks, { passive: true });
-
-  $railInner.addEventListener('click', function (e) {
-    var t = e.target;
-    if (!(t instanceof Element)) return;
-    if (!t.closest('[data-act]')) return;
-    handleTap(t);
-  });
 
   /* ---------------- 抽屉事件 ---------------- */
   document.getElementById('btn-new').addEventListener('click', function () {
@@ -4932,6 +4931,7 @@
   var lastNarrow = window.innerWidth <= 760;
   window.addEventListener('resize', function () {
     applyView();
+    positionRail();
     var narrow = window.innerWidth <= 760;
     if (narrow !== lastNarrow) { lastNarrow = narrow; render(); }
     if (resizeTimer) clearTimeout(resizeTimer);
@@ -6275,9 +6275,6 @@
       if (el2) el2.style.transform = 'translateY(' + dWorld + 'px)';
     });
 
-    // 拖动父级时实时重绘连线，保证连线跟手、转移连贯
-    drawLinks();
-
     var over = document.elementFromPoint(e.clientX, e.clientY);
     var catEl = over && over.closest ? over.closest('[data-cat]') : null;
     var prev = $catList.querySelector('.cat-item.drop');
@@ -6316,16 +6313,17 @@
     reorderByDrop(d.id, e.clientY);
   }
 
+  /* 目录条目：排序模式下按住拖动可换顺序 / 拖到分类可迁移；点一下 = 定位到画布那一块并打开编辑 */
   $railInner.addEventListener('pointerdown', function (e) {
-    if (readOnly) return;
     if (e.pointerType === 'mouse' && e.button !== 0) return;
-    if (e.target.closest && e.target.closest('[data-act]')) return;
     var item = e.target.closest ? e.target.closest('[data-rail]') : null;
     if (!item) return;
+    var id = item.getAttribute('data-rail');
+    if (readOnly) { focusBlock(id); openEditor(id); return; }
     railDrag = {
-      id: item.getAttribute('data-rail'),
+      id: id,
       item: item,
-      ids: subtreeIds(item.getAttribute('data-rail')),
+      ids: subtreeIds(id),
       sx: e.clientX,
       sy: e.clientY,
       top: parseFloat(item.style.top || '0') || 0,
@@ -6335,6 +6333,13 @@
     window.addEventListener('pointermove', railMove);
     window.addEventListener('pointerup', railUp);
   });
+
+  /* 悬停目录条目 → 画布里那张能力卡亮起来，随时回答「这一堆知识点属于谁」 */
+  $railInner.addEventListener('pointerover', function (e) {
+    var item = e.target.closest ? e.target.closest('[data-rail]') : null;
+    setRailFocus(item ? item.getAttribute('data-rail') : null);
+  });
+  $railInner.addEventListener('pointerleave', function () { setRailFocus(null); });
 
   var $railSort = document.getElementById('rail-sort');
   $railSort.addEventListener('click', function () {
