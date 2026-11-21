@@ -83,6 +83,17 @@
 
     --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,"Courier New",monospace;
   }
+
+  /* ============ 布局常量：左栏三块的宽度只在这里定义一次 ============
+     分类栏、能力目录、画布三者左边界互相咬合（画布 left = 分类栏 + 目录），
+     写死数字的话改一处就要同步另外两处，所以统一用变量算。
+     --rail-w-min 是收纳态（只露进度环），--rail-w-max 是悬停展开态。 */
+  :root{
+    --cats-w:104px;      /* 左侧分类栏 */
+    --rail-w-min:70px;   /* 目录收纳：刚好放下 34px 进度环 + 两侧 12px 留白 + 6px 滚动条 */
+    --rail-w-max:252px;  /* 目录展开：完整条目 */
+    --rail-shift:.22s cubic-bezier(.4,0,.2,1);
+  }
   *{box-sizing:border-box}
   html,body{margin:0;padding:0;height:100%}
   [hidden]{display:none !important}
@@ -155,7 +166,7 @@
 
   /* ---------- 画布 ---------- */
   .stage{
-    position:fixed;top:56px;left:356px;right:0;bottom:0;
+    position:fixed;top:56px;left:calc(var(--cats-w) + var(--rail-w-max));right:0;bottom:0;
     overflow:hidden;touch-action:none;cursor:grab;
     background-color:var(--bg);
     background-image:radial-gradient(rgba(120,160,220,.15) 1px, transparent 1px);
@@ -550,7 +561,7 @@
 
   /* ---------- 周常任务 ---------- */
   .tasks{
-    position:fixed;left:368px;bottom:14px;z-index:40;width:252px;
+    position:fixed;left:calc(var(--cats-w) + var(--rail-w-max) + 12px);bottom:14px;z-index:40;width:252px;
     border-radius:12px;background:rgba(10,17,29,.94);
     -webkit-backdrop-filter:blur(14px);backdrop-filter:blur(14px);
     border:1px solid rgba(var(--steel-rgb),.18);
@@ -600,7 +611,7 @@
 
   /* ---------- 分类栏 ---------- */
   .cats{
-    position:fixed;left:0;top:56px;bottom:0;width:104px;z-index:32;
+    position:fixed;left:0;top:56px;bottom:0;width:var(--cats-w);z-index:32;
     padding:12px 8px;display:flex;flex-direction:column;gap:6px;
     background:linear-gradient(180deg, rgba(5,9,17,.98), rgba(4,7,13,.96));
     border-right:1px solid rgba(var(--steel-rgb),.12);
@@ -627,14 +638,17 @@
 
   /* ---------- 左侧能力目录 ---------- */
   .rail{
-    position:fixed;left:104px;top:56px;bottom:0;width:252px;z-index:30;
+    position:fixed;left:var(--cats-w);top:56px;bottom:0;width:var(--rail-w-max);z-index:30;
     overflow-y:auto;overflow-x:hidden;
     background:linear-gradient(180deg, rgba(7,12,21,.96), rgba(5,8,15,.92));
     border-right:1px solid rgba(var(--steel-rgb),.14);
     -webkit-backdrop-filter:blur(10px);backdrop-filter:blur(10px);
   }
+  /* 高度写死：收纳态会把标题和排序按钮藏掉，若让它随内容塌下去，
+     #rail-inner 的 offsetTop 就会变，而条目的 top 是 positionRail() 按这个值累加的，
+     结果整列会在悬停瞬间跳一下。钉住高度后两态 offsetTop 相同，列表纹丝不动。 */
   .rail-head{
-    position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:7px;
+    position:sticky;top:0;z-index:2;display:flex;align-items:center;gap:7px;height:45px;
     padding:10px 12px 9px;background:rgba(7,12,21,.94);
     -webkit-backdrop-filter:blur(8px);backdrop-filter:blur(8px);
     border-bottom:1px solid rgba(var(--steel-rgb),.1);
@@ -684,15 +698,78 @@
   .ri-dot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:var(--edge)}
   .ri-dot.on{background:var(--mint);box-shadow:0 0 8px rgba(var(--mint-rgb),.75)}
   .ri-dot.ready{background:var(--amber);box-shadow:0 0 8px rgba(var(--amber-rgb),.65)}
+  /* 收纳态专用徽标：贴在进度环右上角。展开态有完整的 .ri-dot，这个由 CSS 藏掉，
+     两份不会同时出现。z-index:2 是为了盖过 .ri-ring::after 那块内圆盘 */
+  .ri-flag{
+    display:none;position:absolute;top:-2px;right:-2px;z-index:2;
+    width:9px;height:9px;border-radius:50%;border:2px solid var(--panel);
+  }
+  .ri-flag.on{background:var(--mint)}
+  .ri-flag.ready{background:var(--amber);box-shadow:0 0 7px rgba(var(--amber-rgb),.8)}
   /* 悬停目录条目时，画布里对应的能力卡亮起，明确「这一堆属于谁」 */
   .card.is-focus{
     z-index:4;border-color:rgba(var(--cyan-rgb),.6);
     outline:1px solid rgba(var(--cyan-rgb),.55);outline-offset:2px;
   }
   .rail-empty{padding:18px 14px;font-size:12px;color:var(--muted-2);line-height:1.8;text-align:center}
-  .rail::-webkit-scrollbar{height:6px}
+  /* 竖向滚动条也压到 6px：收纳态整条目录只有 70px 宽，
+     默认 15px 的滚动条会把进度环挤到裁切 */
+  .rail::-webkit-scrollbar{width:6px;height:6px}
   .rail::-webkit-scrollbar-thumb{background:rgba(var(--steel-rgb),.25);border-radius:3px}
   .rail::-webkit-scrollbar-track{background:transparent}
+
+  /* ---------- 目录收纳（仅宽屏） ----------
+     画布左边界（.stage）始终按收纳宽度算，绝不跟着悬停动：
+     $stage.getBoundingClientRect() 是平移和缩放的数学基准（wheel 缩放取鼠标为圆心、
+     fit-to-view 取 stage 中心），边界一动，你正拖着的节点会当场跳走。
+     所以展开的目录是浮在画布之上的浮层（.rail z-index:30 > .stage），
+     代价是临时遮住画布左边一条，换来画布永久多出约 180px 可视宽度。
+     周常任务面板（.tasks）跟着目录一起滑，维持它「贴在目录右侧 12px」的原有关系。 */
+  @media (min-width:761px){
+    .stage{left:calc(var(--cats-w) + var(--rail-w-min))}
+    .tasks{left:calc(var(--cats-w) + var(--rail-w-min) + 12px);transition:left var(--rail-shift)}
+  }
+  /* 只有真有指针悬停能力的设备才收纳；触屏笔电走下面那块常驻展开 */
+  @media (min-width:761px) and (hover:hover){
+    .rail{width:var(--rail-w-min);transition:width var(--rail-shift)}
+    .rail-head{justify-content:center;padding-left:0;padding-right:0}
+    .rail-head b,.rail-sort{display:none}
+    /* 条目高度必须两态一致：positionRail() 按 offsetHeight 累加写死 top。
+       所以只藏文字和状态点，34px 进度环和 8px 上下内边距原样保留。 */
+    .ri{gap:0;justify-content:center;padding:8px 0}
+    .ri-body,.ri-dot{display:none}
+    .ri-flag{display:block}
+    /* 空状态那段引导文案在 70px 宽里会被裁成半句，藏掉；
+       头部本来就显示条数 0，悬停展开后文案自然回来 */
+    .rail-empty{display:none}
+
+    /* 展开：悬停、键盘聚焦（否则 Tab 进来永远看不到能力名）、排序模式三者共用。
+       排序模式必须常开——拖拽排序用 elementFromPoint 找左侧分类做迁移目标，
+       指针会移出目录，靠 mouseleave 收纳等于把用户手里正拖的东西抽走。 */
+    .rail:hover,.rail:focus-within,.rail.edit{width:var(--rail-w-max)}
+    .rail:hover .rail-head,.rail:focus-within .rail-head,.rail.edit .rail-head{
+      justify-content:flex-start;padding-left:12px;padding-right:12px;
+    }
+    .rail:hover .rail-head b,.rail:focus-within .rail-head b,.rail.edit .rail-head b,
+    .rail:hover .rail-sort,.rail:focus-within .rail-sort,.rail.edit .rail-sort{display:block}
+    .rail:hover .ri,.rail:focus-within .ri,.rail.edit .ri{
+      gap:10px;justify-content:flex-start;padding:8px 11px 8px 10px;
+    }
+    .rail:hover .ri-body,.rail:focus-within .ri-body,.rail.edit .ri-body,
+    .rail:hover .ri-dot,.rail:focus-within .ri-dot,.rail.edit .ri-dot{display:block}
+    .rail:hover .rail-empty,.rail:focus-within .rail-empty,.rail.edit .rail-empty{display:block}
+    .rail:hover .ri-flag,.rail:focus-within .ri-flag,.rail.edit .ri-flag{display:none}
+    /* .tasks 是 .rail 的兄弟节点，CSS 选不到「兄弟悬停」，只能用 :has()。
+       不支持 :has() 的浏览器会整条丢弃这个规则，退化结果是展开时面板被目录盖住，
+       布局不会坏。 */
+    body:has(.rail:hover) .tasks,
+    body:has(.rail:focus-within) .tasks,
+    body:has(.rail.edit) .tasks{left:calc(var(--cats-w) + var(--rail-w-max) + 12px)}
+  }
+  @media (min-width:761px) and (hover:none){
+    .stage{left:calc(var(--cats-w) + var(--rail-w-max))}
+    .tasks{left:calc(var(--cats-w) + var(--rail-w-max) + 12px)}
+  }
 
   /* ---------- 登录 ---------- */
   .auth{position:fixed;inset:0;z-index:120;display:flex;align-items:center;justify-content:center;padding:22px;
@@ -1052,9 +1129,10 @@
   .bp-link:hover{color:var(--link-hi)}
 
   @media (max-width:900px){
-    .cats{width:92px;padding:10px 6px}
-    .rail{left:92px;width:204px}
-    .stage{left:296px}
+    /* 只改常量，.cats / .rail / .stage / .tasks 的位置全部由变量算出来，
+       不用再逐个覆盖一遍（覆盖顺序一旦写错就会把收纳态顶掉） */
+    :root{--cats-w:92px;--rail-w-max:204px}
+    .cats{padding:10px 6px}
   }
   @media (max-width:620px){
     .brand-sub{display:none}
@@ -2863,8 +2941,16 @@
     row.style.setProperty('--ring', catColor(r.categoryId));
     row.style.setProperty('--p', String(pct));
 
+    var allDone = !!kids.length && done === kids.length;
+    var canBuy = remaining > 0 && remaining <= state.points;
+    var flag = allDone ? ' on' : (canBuy ? ' ready' : '');
+
     var ring = el('div', 'ri-ring');
     ring.appendChild(el('i', '', kids.length ? done + '/' + kids.length : '0'));
+    /* 收纳态只剩进度环，同分类下几个环颜色一模一样、分不出谁是谁，
+       所以把状态点复制一份贴到环右上角当徽标，保住「哪个现在买得起」这个可扫的信号。
+       展开态 CSS 会藏掉徽标、露出原来的 .ri-dot，两者不会同时出现。 */
+    if (flag) ring.appendChild(el('span', 'ri-flag' + flag));
     row.appendChild(ring);
 
     var body = el('div', 'ri-body');
@@ -2874,9 +2960,7 @@
       : (remaining ? '还剩 ' + remaining + ' 小时' : '已全部点亮')));
     row.appendChild(body);
 
-    var allDone = !!kids.length && done === kids.length;
-    var canBuy = remaining > 0 && remaining <= state.points;
-    row.appendChild(el('span', 'ri-dot' + (allDone ? ' on' : (canBuy ? ' ready' : ''))));
+    row.appendChild(el('span', 'ri-dot' + flag));
 
     item.appendChild(row);
     return item;
