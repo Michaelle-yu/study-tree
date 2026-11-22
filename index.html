@@ -698,14 +698,6 @@
   .ri-dot{flex:0 0 auto;width:6px;height:6px;border-radius:50%;background:var(--edge)}
   .ri-dot.on{background:var(--mint);box-shadow:0 0 8px rgba(var(--mint-rgb),.75)}
   .ri-dot.ready{background:var(--amber);box-shadow:0 0 8px rgba(var(--amber-rgb),.65)}
-  /* 收纳态专用徽标：贴在进度环右上角。展开态有完整的 .ri-dot，这个由 CSS 藏掉，
-     两份不会同时出现。z-index:2 是为了盖过 .ri-ring::after 那块内圆盘 */
-  .ri-flag{
-    display:none;position:absolute;top:-2px;right:-2px;z-index:2;
-    width:9px;height:9px;border-radius:50%;border:2px solid var(--panel);
-  }
-  .ri-flag.on{background:var(--mint)}
-  .ri-flag.ready{background:var(--amber);box-shadow:0 0 7px rgba(var(--amber-rgb),.8)}
   /* 悬停目录条目时，画布里对应的能力卡亮起，明确「这一堆属于谁」 */
   .card.is-focus{
     z-index:4;border-color:rgba(var(--cyan-rgb),.6);
@@ -738,7 +730,6 @@
        所以只藏文字和状态点，34px 进度环和 8px 上下内边距原样保留。 */
     .ri{gap:0;justify-content:center;padding:8px 0}
     .ri-body,.ri-dot{display:none}
-    .ri-flag{display:block}
     /* 空状态那段引导文案在 70px 宽里会被裁成半句，藏掉；
        头部本来就显示条数 0，悬停展开后文案自然回来 */
     .rail-empty{display:none}
@@ -758,7 +749,6 @@
     .rail:hover .ri-body,.rail:focus-within .ri-body,.rail.edit .ri-body,
     .rail:hover .ri-dot,.rail:focus-within .ri-dot,.rail.edit .ri-dot{display:block}
     .rail:hover .rail-empty,.rail:focus-within .rail-empty,.rail.edit .rail-empty{display:block}
-    .rail:hover .ri-flag,.rail:focus-within .ri-flag,.rail.edit .ri-flag{display:none}
     /* .tasks 是 .rail 的兄弟节点，CSS 选不到「兄弟悬停」，只能用 :has()。
        不支持 :has() 的浏览器会整条丢弃这个规则，退化结果是展开时面板被目录盖住，
        布局不会坏。 */
@@ -2941,16 +2931,8 @@
     row.style.setProperty('--ring', catColor(r.categoryId));
     row.style.setProperty('--p', String(pct));
 
-    var allDone = !!kids.length && done === kids.length;
-    var canBuy = remaining > 0 && remaining <= state.points;
-    var flag = allDone ? ' on' : (canBuy ? ' ready' : '');
-
     var ring = el('div', 'ri-ring');
     ring.appendChild(el('i', '', kids.length ? done + '/' + kids.length : '0'));
-    /* 收纳态只剩进度环，同分类下几个环颜色一模一样、分不出谁是谁，
-       所以把状态点复制一份贴到环右上角当徽标，保住「哪个现在买得起」这个可扫的信号。
-       展开态 CSS 会藏掉徽标、露出原来的 .ri-dot，两者不会同时出现。 */
-    if (flag) ring.appendChild(el('span', 'ri-flag' + flag));
     row.appendChild(ring);
 
     var body = el('div', 'ri-body');
@@ -2960,7 +2942,9 @@
       : (remaining ? '还剩 ' + remaining + ' 小时' : '已全部点亮')));
     row.appendChild(body);
 
-    row.appendChild(el('span', 'ri-dot' + flag));
+    var allDone = !!kids.length && done === kids.length;
+    var canBuy = remaining > 0 && remaining <= state.points;
+    row.appendChild(el('span', 'ri-dot' + (allDone ? ' on' : (canBuy ? ' ready' : ''))));
 
     item.appendChild(row);
     return item;
