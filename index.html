@@ -24,8 +24,10 @@
     --steel-rgb:122,152,200;              /* 所有描边 / 分隔线 / 网格的基色，强度另调透明度 */
     --panel-line:rgba(var(--steel-rgb),.16);
     --edge:#35435e;                       /* 卡片左侧色条、空状态圆点的深色边 */
-    --ink-on-mint:#04140d;                /* 亮色填充上的深色字（勾选框、头像字母） */
+    --ink-on-mint:#04140d;                /* 薄荷绿填充上的深色字（勾选框） */
     --ink-on-amber:#241600;               /* 琥珀徽章上的深色字 */
+    --ink-on-cat:#0a1018;                 /* 分类色头像上的字母：6 种分类色都是浅亮色，统一用中性深墨，
+                                             不借用 --ink-on-mint 的绿调深墨（压在琥珀/玫红上会偏色） */
 
     /* ---- 结构层：文字灰阶（8 档，从亮到暗。蓝灰文字只准取这 8 个值）---- */
     --ink-1:#e6edfa;                      /* 主标题、强调数字 */
@@ -734,25 +736,29 @@
        头部本来就显示条数 0，悬停展开后文案自然回来 */
     .rail-empty{display:none}
 
-    /* 展开：悬停、键盘聚焦（否则 Tab 进来永远看不到能力名）、排序模式三者共用。
+    /* 展开：悬停（JS 延迟 120ms 才打 .open）、键盘聚焦（否则 Tab 进来永远看不到能力名）、
+       排序模式三者共用。
+       悬停为什么不用原生 :hover：鼠标从分类栏划向画布必然路过目录，立即展开会让
+       画布边缘的任务面板跟着抽动；而纯 CSS 没法只延迟「展开」那一下——transition-delay
+       会连收起一起拖慢，display 变化更等不了，所以由下面 JS 的 mouseenter 打 .open。
        排序模式必须常开——拖拽排序用 elementFromPoint 找左侧分类做迁移目标，
        指针会移出目录，靠 mouseleave 收纳等于把用户手里正拖的东西抽走。 */
-    .rail:hover,.rail:focus-within,.rail.edit{width:var(--rail-w-max)}
-    .rail:hover .rail-head,.rail:focus-within .rail-head,.rail.edit .rail-head{
+    .rail.open,.rail:focus-within,.rail.edit{width:var(--rail-w-max)}
+    .rail.open .rail-head,.rail:focus-within .rail-head,.rail.edit .rail-head{
       justify-content:flex-start;padding-left:12px;padding-right:12px;
     }
-    .rail:hover .rail-head b,.rail:focus-within .rail-head b,.rail.edit .rail-head b,
-    .rail:hover .rail-sort,.rail:focus-within .rail-sort,.rail.edit .rail-sort{display:block}
-    .rail:hover .ri,.rail:focus-within .ri,.rail.edit .ri{
+    .rail.open .rail-head b,.rail:focus-within .rail-head b,.rail.edit .rail-head b,
+    .rail.open .rail-sort,.rail:focus-within .rail-sort,.rail.edit .rail-sort{display:block}
+    .rail.open .ri,.rail:focus-within .ri,.rail.edit .ri{
       gap:10px;justify-content:flex-start;padding:8px 11px 8px 10px;
     }
-    .rail:hover .ri-body,.rail:focus-within .ri-body,.rail.edit .ri-body,
-    .rail:hover .ri-dot,.rail:focus-within .ri-dot,.rail.edit .ri-dot{display:block}
-    .rail:hover .rail-empty,.rail:focus-within .rail-empty,.rail.edit .rail-empty{display:block}
-    /* .tasks 是 .rail 的兄弟节点，CSS 选不到「兄弟悬停」，只能用 :has()。
+    .rail.open .ri-body,.rail:focus-within .ri-body,.rail.edit .ri-body,
+    .rail.open .ri-dot,.rail:focus-within .ri-dot,.rail.edit .ri-dot{display:block}
+    .rail.open .rail-empty,.rail:focus-within .rail-empty,.rail.edit .rail-empty{display:block}
+    /* .tasks 是 .rail 的兄弟节点，CSS 选不到「兄弟悬停/兄弟状态」，只能用 :has()。
        不支持 :has() 的浏览器会整条丢弃这个规则，退化结果是展开时面板被目录盖住，
        布局不会坏。 */
-    body:has(.rail:hover) .tasks,
+    body:has(.rail.open) .tasks,
     body:has(.rail:focus-within) .tasks,
     body:has(.rail.edit) .tasks{left:calc(var(--cats-w) + var(--rail-w-max) + 12px)}
   }
@@ -781,7 +787,7 @@
   .avatar{
     width:46px;height:46px;border-radius:13px;flex:0 0 auto;overflow:hidden;
     display:flex;align-items:center;justify-content:center;
-    font-size:18px;font-weight:600;color:var(--ink-on-mint);
+    font-size:18px;font-weight:600;color:var(--ink-on-cat);
     box-shadow:0 8px 22px -12px rgba(0,0,0,.9);
   }
   .avatar img{width:100%;height:100%;border-radius:inherit;object-fit:cover;display:block}
@@ -6489,6 +6495,18 @@
     $rail.classList.toggle('edit', railEdit);
     $railSort.textContent = railEdit ? '完成' : '排序';
     toast(railEdit ? '排序模式：上下拖动调整顺序，拖到左侧分类可迁移' : '已退出排序模式');
+  });
+
+  /* 悬停 intent：进入目录 120ms 后才展开，收起立即生效。
+     路过目录去画布（目录右边就是画布）时，画布边缘的任务面板不会跟着抽动。 */
+  var railOpenTimer = 0;
+  $rail.addEventListener('mouseenter', function () {
+    clearTimeout(railOpenTimer);
+    railOpenTimer = setTimeout(function () { $rail.classList.add('open'); }, 120);
+  });
+  $rail.addEventListener('mouseleave', function () {
+    clearTimeout(railOpenTimer);
+    $rail.classList.remove('open');
   });
 
   function reorderByDrop(id, clientY) {
